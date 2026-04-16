@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     evaluator_model: str = "deepseek-chat"
 
     default_interval_seconds: int = 300
-    default_timeout_seconds: int = 30
+    default_timeout_seconds: int = 120
     default_failure_threshold: int = 3
     alert_cooldown_minutes: int = 30
     scheduler_poll_seconds: int = 30

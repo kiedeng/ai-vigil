@@ -41,7 +41,7 @@ class CheckBase(BaseModel):
     type: CheckType
     enabled: bool = True
     interval_seconds: int = Field(default=300, ge=10)
-    timeout_seconds: int = Field(default=30, ge=1)
+    timeout_seconds: int = Field(default=120, ge=1)
     failure_threshold: int = Field(default=3, ge=1)
     new_api_instance_id: int | None = None
     model_name: str | None = None

@@ -175,7 +175,7 @@ const CHECK_EXAMPLES: Record<CheckType, CheckExample> = {
       prompt: 'Reply with OK only.',
       payload: {
         temperature: 0,
-        max_tokens: 16
+        max_tokens: 128
       }
     },
     validation_config: {},
@@ -189,7 +189,7 @@ const CHECK_EXAMPLES: Record<CheckType, CheckExample> = {
       prompt: 'Reply with OK only.',
       payload: {
         temperature: 0,
-        max_tokens: 16
+        max_tokens: 64
       }
     },
     validation_config: {},
@@ -374,7 +374,7 @@ const form = reactive<FormState>({
   type: 'http_health',
   enabled: true,
   interval_seconds: 300,
-  timeout_seconds: 30,
+  timeout_seconds: 120,
   failure_threshold: 3,
   new_api_instance_id: null,
   model_name: ''
@@ -394,7 +394,7 @@ function resetForm() {
     type: 'http_health',
     enabled: true,
     interval_seconds: 300,
-    timeout_seconds: 30,
+    timeout_seconds: 120,
     failure_threshold: 3,
     new_api_instance_id: instances.value.find((item) => item.is_default)?.id ?? null,
     model_name: ''

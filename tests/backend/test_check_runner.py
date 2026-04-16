@@ -4,7 +4,15 @@ from sqlalchemy.orm import sessionmaker
 
 from backend.app.database import Base
 from backend.app.models import Check
-from backend.app.services.check_runner import run_check_once
+from backend.app.services.check_runner import _extract_chat_content, run_check_once
+
+
+def test_extract_chat_content_accepts_compatible_shapes():
+    assert _extract_chat_content({"choices": [{"message": {"content": "OK"}}]}) == "OK"
+    assert _extract_chat_content({"choices": [{"message": {"content": [{"type": "text", "text": "OK"}]}}]}) == "OK"
+    assert _extract_chat_content({"choices": [{"message": {"reasoning_content": "thinking"}}]}) == "thinking"
+    assert _extract_chat_content({"choices": [{"text": "legacy"}]}) == "legacy"
+    assert _extract_chat_content({"choices": [{"message": {"tool_calls": [{"name": "health"}]}}]})
 
 
 @pytest.mark.asyncio
@@ -38,4 +46,3 @@ async def test_run_check_once_initializes_failure_state():
         assert check.state.status == "failure"
     finally:
         db.close()
-

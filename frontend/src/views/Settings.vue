@@ -52,7 +52,7 @@ const databaseUrl = ref('');
 const form = reactive({
   evaluator_model: '',
   default_interval_seconds: 300,
-  default_timeout_seconds: 30,
+  default_timeout_seconds: 120,
   default_failure_threshold: 3,
   alert_cooldown_minutes: 30,
   daily_report_enabled: true,

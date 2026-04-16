@@ -91,6 +91,46 @@ def _merge_payload(default_payload: dict[str, Any], request_config: dict[str, An
     return payload
 
 
+def _extract_text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, list):
+        parts: list[str] = []
+        for item in value:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict):
+                parts.append(str(item.get("text") or item.get("content") or ""))
+        return "".join(parts).strip()
+    return str(value).strip()
+
+
+def _extract_chat_content(data: Any) -> str:
+    if not isinstance(data, dict):
+        return ""
+    choices = data.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return ""
+    choice = choices[0] if isinstance(choices[0], dict) else {}
+    message = choice.get("message") if isinstance(choice.get("message"), dict) else {}
+    for value in (
+        message.get("content"),
+        message.get("reasoning_content"),
+        message.get("reasoning"),
+        choice.get("text"),
+        choice.get("delta", {}).get("content") if isinstance(choice.get("delta"), dict) else None,
+    ):
+        text = _extract_text(value)
+        if text:
+            return text
+    tool_calls = message.get("tool_calls")
+    if isinstance(tool_calls, list) and tool_calls:
+        return json.dumps(tool_calls, ensure_ascii=False)
+    return ""
+
+
 def _json_summary(response: httpx.Response) -> tuple[str | None, Any]:
     summary = summarize_text(response.text)
     try:
@@ -130,14 +170,14 @@ async def _run_llm_check(db: Session, check: Check) -> CheckOutcome:
         "model": model,
         "messages": [{"role": "user", "content": request_config.get("prompt", "Reply with OK only.")}],
         "temperature": 0,
-        "max_tokens": 16,
+        "max_tokens": 128,
     }, request_config)
     async with httpx.AsyncClient(timeout=check.timeout_seconds) as client:
         response = await client.post(_check_new_api_url(db, check, "/v1/chat/completions"), headers=_check_headers(db, check), json=payload)
     summary, data = _json_summary(response)
     if response.status_code >= 400:
         return CheckOutcome(False, response.status_code, summary, f"new-api returned {response.status_code}")
-    content = (data or {}).get("choices", [{}])[0].get("message", {}).get("content")
+    content = _extract_chat_content(data)
     if not content:
         return CheckOutcome(False, response.status_code, summary, "LLM response content is empty")
     return CheckOutcome(True, response.status_code, summary)
@@ -152,7 +192,7 @@ async def _run_completion_check(db: Session, check: Check) -> CheckOutcome:
         "model": model,
         "prompt": request_config.get("prompt", "Reply with OK only."),
         "temperature": 0,
-        "max_tokens": 16,
+        "max_tokens": 64,
     }, request_config)
     async with httpx.AsyncClient(timeout=check.timeout_seconds) as client:
         response = await client.post(_check_new_api_url(db, check, "/v1/completions"), headers=_check_headers(db, check), json=payload)
@@ -182,14 +222,14 @@ async def _run_vision_check(db: Session, check: Check) -> CheckOutcome:
             }
         ],
         "temperature": 0,
-        "max_tokens": 32,
+        "max_tokens": 128,
     }, request_config)
     async with httpx.AsyncClient(timeout=check.timeout_seconds) as client:
         response = await client.post(_check_new_api_url(db, check, "/v1/chat/completions"), headers=_check_headers(db, check), json=payload)
     summary, data = _json_summary(response)
     if response.status_code >= 400:
         return CheckOutcome(False, response.status_code, summary, f"new-api returned {response.status_code}")
-    content = (data or {}).get("choices", [{}])[0].get("message", {}).get("content")
+    content = _extract_chat_content(data)
     if not content:
         return CheckOutcome(False, response.status_code, summary, "Vision response content is empty")
     return CheckOutcome(True, response.status_code, summary)
