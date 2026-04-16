@@ -1,0 +1,43 @@
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: ai-eye-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: ai_eye
+      MYSQL_USER: ai_eye
+      MYSQL_PASSWORD: "${MYSQL_PASSWORD:-ai_eye_password}"
+      MYSQL_ROOT_PASSWORD: "${MYSQL_ROOT_PASSWORD:-root_password}"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-root_password}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  ai-eye:
+    build: .
+    container_name: ai-eye
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    ports:
+      - "8010:8010"
+    environment:
+      APP_NAME: "AI Eye Monitor"
+      API_PREFIX: "/api"
+      DATABASE_URL: "mysql+pymysql://ai_eye:${MYSQL_PASSWORD:-ai_eye_password}@mysql:3306/ai_eye?charset=utf8mb4"
+      ADMIN_USERNAME: "${ADMIN_USERNAME:-admin}"
+      ADMIN_PASSWORD: "${ADMIN_PASSWORD:-admin123}"
+      JWT_SECRET: "${JWT_SECRET:-replace-with-a-long-random-string}"
+      JWT_EXPIRE_MINUTES: "720"
+      NEW_API_BASE_URL: "${NEW_API_BASE_URL:-http://localhost:3000}"
+      NEW_API_KEY: "${NEW_API_KEY:-}"
+      EVALUATOR_MODEL: "${EVALUATOR_MODEL:-deepseek-chat}"
+    volumes:
+      - ./data:/app/data
+
+volumes:
+  mysql-data:
