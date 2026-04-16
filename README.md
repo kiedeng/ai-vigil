@@ -1,5 +1,7 @@
 # AI Vigil
 
+[English](README.md) | [简体中文](README.zh-CN.md)
+
 AI Vigil is an open-source monitoring console for OpenAI-compatible gateways such as `new-api`. It watches model availability, HTTP services, semantic content quality, regression golden sets, and alert delivery from one self-hosted dashboard.
 
 > Previously named AI Eye Monitor in the codebase. The project goal is simple: know whether your AI gateway is alive, whether each model still works, and whether important model outputs are still correct.
