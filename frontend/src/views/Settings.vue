@@ -39,6 +39,37 @@
         <el-input v-model="databaseUrl" disabled />
       </el-form-item>
       <el-alert title="new-api 实例和密钥请在模型中心维护；日报按 Asia/Shanghai 时间发送。" type="info" :closable="false" />
+
+      <el-divider content-position="left">配置文件导入</el-divider>
+      <el-form-item label="YAML 配置文件">
+        <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap">
+          <el-input v-model="importPath" placeholder="ai-vigil.yaml（默认）" style="width: 280px" />
+          <el-button type="primary" :loading="importing" @click="doImport">导入配置文件</el-button>
+          <el-button @click="downloadTemplate">下载模板</el-button>
+        </div>
+        <div style="margin-top: 8px; color: #909399; font-size: 12px">
+          从 YAML 文件导入 instances、checks、alert_channels、golden_sets。按 name upsert，不删除已有数据。
+        </div>
+      </el-form-item>
+      <el-alert
+        v-if="importResult"
+        :title="importResult.success ? '导入成功' : '导入完成（有错误）'"
+        :type="importResult.success ? 'success' : 'warning'"
+        :closable="true"
+        show-icon
+        style="margin-bottom: 16px"
+      >
+        <template #default>
+          <pre style="margin: 4px 0 0; font-size: 12px; white-space: pre-wrap">{{ importResult.message }}</pre>
+          <ul v-if="importResult.errors && Object.values(importResult.errors).some(v => v?.length)" style="margin: 4px 0 0; font-size: 12px">
+            <li v-for="(errs, section) in importResult.errors" :key="String(section)">
+              <template v-if="errs?.length">
+                <strong>{{ section }}</strong>: <span v-for="e in errs" :key="e">{{ e }}；</span>
+              </template>
+            </li>
+          </ul>
+        </template>
+      </el-alert>
     </el-form>
   </section>
 </template>
@@ -49,6 +80,13 @@ import { onMounted, reactive, ref } from 'vue';
 import { api } from '../api';
 
 const databaseUrl = ref('');
+const importing = ref(false);
+const importPath = ref('');
+const importResult = ref<{
+  success: boolean;
+  message: string;
+  errors: Record<string, string[]>;
+} | null>(null);
 const form = reactive({
   evaluator_model: '',
   default_interval_seconds: 300,
@@ -79,6 +117,30 @@ async function save() {
   await api.updateSettings(form);
   ElMessage.success('设置已保存');
   await load();
+}
+
+async function doImport() {
+  importing.value = true;
+  importResult.value = null;
+  try {
+    const result = await api.importConfig(importPath.value || undefined);
+    importResult.value = result;
+  } catch (e: unknown) {
+    importResult.value = {
+      success: false,
+      message: (e as Error).message || String(e),
+      errors: {},
+    };
+  } finally {
+    importing.value = false;
+  }
+}
+
+function downloadTemplate() {
+  const link = document.createElement('a');
+  link.href = '/ai-vigil.yaml.example';
+  link.download = 'ai-vigil.yaml.example';
+  link.click();
 }
 
 onMounted(load);

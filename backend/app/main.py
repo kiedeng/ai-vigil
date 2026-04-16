@@ -11,6 +11,7 @@ from .api import (
     analytics,
     auth,
     checks,
+    config_import,
     dashboard,
     evaluator_prompts,
     golden,
@@ -20,7 +21,7 @@ from .api import (
     samples,
     settings,
 )
-from .config import get_settings
+from .config import PROJECT_ROOT, get_settings
 from .database import SessionLocal, init_db
 from .services.bootstrap import seed_defaults
 from .services.scheduler import start_scheduler, stop_scheduler
@@ -63,6 +64,7 @@ app.include_router(evaluator_prompts.router, prefix=api_prefix)
 app.include_router(golden.router, prefix=api_prefix)
 app.include_router(alert_channels.router, prefix=api_prefix)
 app.include_router(settings.router, prefix=api_prefix)
+app.include_router(config_import.router, prefix=api_prefix)
 
 
 @app.get("/healthz")
@@ -83,3 +85,12 @@ def spa_fallback(path: str):
     if index_file.exists():
         return FileResponse(index_file)
     return {"message": "Frontend dist not found. Run npm run build in frontend/."}
+
+
+@app.get("/ai-vigil.yaml.example", include_in_schema=False)
+def serve_example_config():
+    """Serve the config template file for download."""
+    example_path = PROJECT_ROOT / "ai-vigil.yaml.example"
+    if example_path.exists():
+        return FileResponse(example_path, media_type="text/plain")
+    return {"message": "Template not found"}

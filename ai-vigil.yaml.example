@@ -1,0 +1,216 @@
+# ============================================================
+# AI Vigil 配置文件模板
+# ============================================================
+#
+# 使用方法：
+#   1. 复制此文件为 ai-vigil.yaml
+#   2. 编辑 ai-vigil.yaml 填入你的配置
+#   3. 导入到数据库：
+#        API:  POST /api/config-import
+#        CLI:  python -m backend.app.config_import
+#
+# Upsert 语义：按 name 字段唯一识别，存在则更新，不存在则创建。
+# 数据库中有但 YAML 中没有的实体不会被删除（保留运行历史）。
+#
+# ============================================================
+
+# ------------------------------------------------------------
+# new-api 实例
+# 在 checks 和 golden_sets 中通过 instance 字段引用这里的 name
+# ------------------------------------------------------------
+instances:
+  # - name: "production"           # 唯一标识符，其他地方通过此名称引用
+  #   base_url: "https://your-api.com"
+  #   api_key: "sk-xxxx"            # 可选；留空则保留数据库已有值
+  #   enabled: true
+  #   is_default: true              # 是否设为默认实例
+  #   description: "生产环境网关"
+
+  # - name: "staging"
+  #   base_url: "https://staging-api.com"
+  #   api_key: "sk-yyyy"
+  #   enabled: true
+  #   is_default: false
+  #   description: "预发布环境"
+
+# ------------------------------------------------------------
+# 监控检查任务
+# type 支持以下类型：
+#   model_llm_chat           /v1/chat/completions 通用对话
+#   model_llm_completion     /v1/completions 旧版补全
+#   model_vision_chat        /v1/chat/completions 多模态（支持图片）
+#   model_embedding          /v1/embeddings 文本向量
+#   model_rerank             /v1/rerank 重排序
+#   model_audio_transcription /v1/audio/transcriptions 语音转文字
+#   model_audio_translation  /v1/audio/translations 语音翻译
+#   model_audio_speech       /v1/audio/speech 文字转语音
+#   model_image_generation   /v1/images/generations 图片生成
+#   model_image_edit         /v1/images/edits 图片编辑
+#   model_moderation         /v1/moderations 内容审核
+#   model_custom_http        自定义 URL（非标准 AI 服务）
+#   http_health              普通 HTTP 健康检查
+#   http_content_ai          HTTP 响应 + AI 语义校验
+# ------------------------------------------------------------
+checks:
+  # - name: "gpt-4o 健康检查"       # 唯一名称
+  #   type: "model_llm_chat"       # 检查类型
+  #   model_name: "gpt-4o"         # 模型 ID（留空则对实例全部模型检查）
+  #   instance: "production"       # 引用的 instance name
+  #   enabled: true
+  #   interval_seconds: 300         # 检查间隔（秒）
+  #   timeout_seconds: 30           # 请求超时（秒）
+  #   failure_threshold: 3          # 连续失败 N 次后告警
+  #
+  #   # request 和 request_config 两种写法等效
+  #   request:
+  #     max_tokens: 10
+  #     temperature: 0
+  #     messages:
+  #       - role: "user"
+  #         content: "say hi"
+  #
+  #   # validation 和 validation_config 两种写法等效
+  #   validation:
+  #     contains: "hi"              # 响应必须包含的文本
+  #     max_response_time_ms: 5000  # 最大响应时间（毫秒）
+  #   # 更多验证字段：
+  #   #   status_code: 200          # 期望 HTTP 状态码
+  #   #   json_path: "$.id"         # JSONPath 提取字段
+  #   #   json_path_equals: "ok"    # 期望字段值
+  #   #   json_schema: {...}        # JSON Schema 校验
+  #   #   ai_expectation: "..."     # AI 语义期望描述
+
+  # - name: "gpt-4o embedding 检查"
+  #   type: "model_embedding"
+  #   model_name: "text-embedding-3-small"
+  #   instance: "production"
+  #   enabled: true
+  #   interval_seconds: 600
+  #   timeout_seconds: 20
+  #   failure_threshold: 3
+  #   request:
+  #     input: "hello world"
+  #   validation:
+  #     json_path: "$.data[0].embedding"
+  #     min_length: 128             # 向量维度最小值
+
+  # - name: "业务接口健康检查"
+  #   type: "http_health"
+  #   instance: ""                 # 自定义 HTTP 不需要 instance
+  #   enabled: true
+  #   interval_seconds: 60
+  #   timeout_seconds: 10
+  #   failure_threshold: 5
+  #   request:
+  #     url: "https://your-service.com/health"
+  #     method: "GET"
+  #   validation:
+  #     status_code: 200
+  #     contains: "ok"
+
+  # - name: "GPT-4o 图片理解检查"
+  #   type: "model_vision_chat"
+  #   model_name: "gpt-4o"
+  #   instance: "production"
+  #   enabled: true
+  #   interval_seconds: 300
+  #   timeout_seconds: 60
+  #   failure_threshold: 3
+  #   request:
+  #     max_tokens: 50
+  #     messages:
+  #       - role: "user"
+  #         content:
+  #           - type: "text"
+  #             text: "描述这张图片"
+  #           - type: "image_url"
+  #             image_url:
+  #               url: "https://www.example.com/sample.jpg"
+  #   validation:
+  #     contains: ""               # 期望响应包含的关键词
+
+# ------------------------------------------------------------
+# 告警渠道
+# 支持 channel_type: generic（通用 JSON Webhook）、wecom_markdown（企业微信 Markdown）
+# ------------------------------------------------------------
+alert_channels:
+  # - name: "企业微信告警"           # 唯一名称
+  #   channel_type: "wecom_markdown"  # generic | wecom_markdown
+  #   webhook_url: "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxxx"
+  #   headers: {}                  # 自定义请求头（JSON 对象）
+  #   secret: ""                   # HMAC 签名密钥（可选）
+  #   enabled: true
+  #   cooldown_minutes: 30         # 告警冷却时间（分钟）
+
+  # - name: "飞书告警"              # 计划支持
+  #   channel_type: "feishu"
+  #   webhook_url: "https://open.feishu.cn/open-apis/bot/v2/hook/xxxx"
+  #   headers: {}
+  #   enabled: false
+  #   cooldown_minutes: 30
+
+# ------------------------------------------------------------
+# Golden Set 回归测试
+# 用于检测模型输出质量是否回归
+# ------------------------------------------------------------
+golden_sets:
+  # - name: "GPT-4o 核心对话质量"    # 唯一名称
+  #   description: "验证核心对话能力未退化"
+  #   instance: "production"
+  #   model_name: "gpt-4o"
+  #   check_type: "model_llm_chat"
+  #   enabled: true
+  #
+  #   # AI 评估配置
+  #   evaluator_config:
+  #     min_confidence: 0.7        # 最低置信度
+  #     always_ai: false           # 是否始终使用 AI 评估（false=先用规则，失败再用 AI）
+  #
+  #   cases:
+  #     - name: "数学计算"          # 案例唯一名称
+  #       enabled: true
+  #       input:
+  #         messages:
+  #           - role: "user"
+  #             content: "1+1等于几？请直接给出数字。"
+  #       expected:
+  #         contains: "2"
+  #         json_path: "$.content"
+  #         ai_expectation: "回答应简洁明确，给出正确结果2，无多余解释"
+  #
+  #     - name: "知识问答-水的化学式"
+  #       enabled: true
+  #       input:
+  #         messages:
+  #           - role: "user"
+  #             content: "水的化学式是什么？"
+  #       expected:
+  #         contains: "H2O"
+  #         ai_expectation: "应正确回答水的化学式为H2O"
+  #
+  #     - name: "代码生成"
+  #       enabled: true
+  #       input:
+  #         messages:
+  #           - role: "user"
+  #             content: "用 Python 写一个快速排序函数"
+  #       expected:
+  #         contains: "def quicksort"
+  #         ai_expectation: "应生成包含 quicksort 函数定义的可运行 Python 代码"
+  #
+  # - name: "Embedding 质量回归"
+  #   description: "验证 embedding 输出质量"
+  #   instance: "production"
+  #   model_name: "text-embedding-3-small"
+  #   check_type: "model_embedding"
+  #   enabled: true
+  #   evaluator_config:
+  #     min_confidence: 0.6
+  #     always_ai: false
+  #   cases:
+  #     - name: "相似语义向量"
+  #       enabled: true
+  #       input:
+  #         input: "今天天气很好"
+  #       expected:
+  #         ai_expectation: "应返回有效的浮点数向量数组，长度在 256 以上"

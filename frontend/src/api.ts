@@ -330,7 +330,15 @@ export const api = {
   deleteGoldenCase: (setId: number, caseId: number) =>
     request<void>(`/api/golden-sets/${setId}/cases/${caseId}`, { method: 'DELETE' }),
   runGoldenSet: (setId: number) => request<GoldenRun[]>(`/api/golden-sets/${setId}/run`, { method: 'POST' }),
-  goldenRuns: (setId: number) => request<GoldenRun[]>(`/api/golden-sets/${setId}/runs`)
+  goldenRuns: (setId: number) => request<GoldenRun[]>(`/api/golden-sets/${setId}/runs`),
+  importConfig: (path?: string) =>
+    request<{
+      success: boolean;
+      message: string;
+      created: Record<string, number>;
+      updated: Record<string, number>;
+      errors: Record<string, string[]>;
+    }>(`/api/config-import`, { method: 'POST', body: JSON.stringify(path ? { path } : {}) }),
 };
 
 export function parseJsonObject(text: string): Record<string, unknown> {

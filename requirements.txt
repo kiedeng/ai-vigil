@@ -8,6 +8,7 @@ PyJWT==2.10.1
 APScheduler==3.11.0
 python-multipart==0.0.20
 pymysql==1.1.1
+PyYAML==6.0.2
 pytest==8.3.4
 pytest-asyncio==0.25.0
 
