@@ -130,6 +130,7 @@ class AlertChannel(Base, TimestampMixin):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
+    channel_type: Mapped[str] = mapped_column(String(50), default="generic", nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     webhook_url: Mapped[str] = mapped_column(Text, nullable=False)
     secret: Mapped[str | None] = mapped_column(Text, nullable=True)

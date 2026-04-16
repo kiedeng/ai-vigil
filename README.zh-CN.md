@@ -229,6 +229,17 @@ Golden Set 定义模型、检查类型、评估 Prompt 和评估配置。Golden 
 
 如果告警通道配置了 `secret`，请求头会包含 `X-Monitor-Signature`，值为请求 body 的 HMAC-SHA256 签名。
 
+### 企业微信机器人
+
+在“告警配置”中新建通道：
+
+- 通道类型选择 `企业微信 Markdown`
+- Webhook URL 填完整机器人地址，例如 `https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=...`
+- Headers JSON 保持 `{}`
+- 签名 Secret 留空
+
+企业微信通道会发送 `msgtype: markdown` 格式的消息。测试消息和测试日报会按真实发送结果提示成功或失败；最近发送记录、失败原因可在“告警配置”的“发送日志”中查看。
+
 ## 数据库迁移
 
 后端启动时会自动初始化空库，并把已有 Alembic 数据库升级到最新版本。

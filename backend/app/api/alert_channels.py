@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models import AlertChannel
+from ..models import AlertChannel, AlertEvent
 from ..schemas import AlertChannelCreate, AlertChannelOut, AlertChannelUpdate, AlertEventOut
 from ..security import get_current_user
 from ..services.alerts import send_test_alert
@@ -15,6 +15,14 @@ router = APIRouter(prefix="/alert-channels", tags=["alert-channels"], dependenci
 @router.get("", response_model=list[AlertChannelOut])
 def list_channels(db: Session = Depends(get_db)) -> list[AlertChannel]:
     return db.query(AlertChannel).order_by(AlertChannel.id.desc()).all()
+
+
+@router.get("/events", response_model=list[AlertEventOut])
+def list_events(channel_id: int | None = None, limit: int = 100, db: Session = Depends(get_db)) -> list[AlertEvent]:
+    query = db.query(AlertEvent).order_by(AlertEvent.id.desc())
+    if channel_id is not None:
+        query = query.filter(AlertEvent.channel_id == channel_id)
+    return query.limit(min(max(limit, 1), 500)).all()
 
 
 @router.post("", response_model=AlertChannelOut, status_code=status.HTTP_201_CREATED)

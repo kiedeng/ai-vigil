@@ -231,6 +231,17 @@ Daily reports use `event_type: "daily_report"` and include:
 
 If an alert channel has a `secret`, requests include `X-Monitor-Signature`, an HMAC-SHA256 signature of the request body.
 
+### Enterprise WeChat Bot
+
+Create an alert channel in **Alert channels**:
+
+- Select `Enterprise WeChat Markdown` as the channel type.
+- Paste the full robot webhook URL, for example `https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=...`.
+- Keep Headers JSON as `{}`.
+- Leave Secret empty.
+
+Enterprise WeChat channels send `msgtype: markdown` messages. Test alerts and test daily reports now report the real delivery result; recent send attempts and failure reasons are visible in the alert event log.
+
 ## Database Migration
 
 On startup, the backend initializes empty databases and upgrades existing Alembic-managed databases to the latest revision.

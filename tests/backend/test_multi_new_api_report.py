@@ -1,10 +1,14 @@
+import json
+
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from backend.app.database import Base
 from backend.app.models import AlertChannel, Check, ModelRule, NewApiInstance
+from backend.app.services import alerts as alerts_service
 from backend.app.services import daily_report as daily_report_service
+from backend.app.services.alerts import _send_webhook, _webhook_body
 from backend.app.services.daily_report import build_daily_report_payload, send_daily_report
 from backend.app.services.new_api import sync_new_api_models
 
@@ -14,6 +18,71 @@ def _db():
     Base.metadata.create_all(bind=engine)
     session_factory = sessionmaker(bind=engine, autocommit=False, autoflush=False)
     return session_factory()
+
+
+def test_wecom_markdown_webhook_body():
+    channel = AlertChannel(
+        name="wecom",
+        channel_type="wecom_markdown",
+        webhook_url="http://example.test/webhook",
+        headers={},
+        enabled=True,
+    )
+    body = json.loads(
+        _webhook_body(
+            channel,
+            {
+                "event_type": "test",
+                "check_name": "Webhook test",
+                "check_type": "test",
+                "status": "test",
+                "failure_count": 0,
+                "duration_ms": 0,
+                "error": None,
+                "occurred_at": "2026-04-16T09:00:00",
+            },
+        )
+    )
+
+    assert body["msgtype"] == "markdown"
+    assert "AI Vigil 测试消息" in body["markdown"]["content"]
+
+
+@pytest.mark.asyncio
+async def test_wecom_error_response_is_failed(monkeypatch):
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"errcode": 93000, "errmsg": "invalid webhook"}
+
+    class FakeClient:
+        def __init__(self, timeout):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def post(self, url, content, headers):
+            return FakeResponse()
+
+    channel = AlertChannel(
+        name="wecom",
+        channel_type="wecom_markdown",
+        webhook_url="http://example.test/webhook",
+        headers={},
+        enabled=True,
+    )
+    monkeypatch.setattr(alerts_service.httpx, "AsyncClient", FakeClient)
+
+    status, error = await _send_webhook(channel, {"event_type": "test"})
+
+    assert status == "failed"
+    assert "WeCom webhook error 93000" in error
 
 
 @pytest.mark.asyncio

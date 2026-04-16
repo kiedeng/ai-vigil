@@ -91,11 +91,24 @@ export interface NewApiInstance {
 export interface AlertChannel {
   id: number;
   name: string;
+  channel_type: 'generic' | 'wecom_markdown';
   enabled: boolean;
   webhook_url: string;
   secret?: string | null;
   headers: Record<string, unknown>;
   cooldown_minutes: number;
+}
+
+export interface AlertEvent {
+  id: number;
+  channel_id?: number | null;
+  check_id?: number | null;
+  run_id?: number | null;
+  event_type: string;
+  status: string;
+  payload: Record<string, unknown>;
+  error?: string | null;
+  created_at: string;
 }
 
 export interface DashboardSummary {
@@ -278,8 +291,14 @@ export const api = {
   updateChannel: (id: number, payload: Partial<AlertChannel>) =>
     request<AlertChannel>(`/api/alert-channels/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
   deleteChannel: (id: number) => request<void>(`/api/alert-channels/${id}`, { method: 'DELETE' }),
-  testChannel: (id: number) => request(`/api/alert-channels/${id}/test`, { method: 'POST' }),
-  testDailyReport: () => request('/api/alert-channels/daily-report/test', { method: 'POST' }),
+  testChannel: (id: number) => request<AlertEvent>(`/api/alert-channels/${id}/test`, { method: 'POST' }),
+  testDailyReport: () => request<AlertEvent[]>('/api/alert-channels/daily-report/test', { method: 'POST' }),
+  alertEvents: (params: { channel_id?: number | null; limit?: number } = {}) => {
+    const query = new URLSearchParams();
+    if (params.channel_id) query.set('channel_id', String(params.channel_id));
+    if (params.limit) query.set('limit', String(params.limit));
+    return request<AlertEvent[]>(`/api/alert-channels/events${query.toString() ? `?${query.toString()}` : ''}`);
+  },
   settings: () => request<Record<string, unknown>>('/api/settings'),
   updateSettings: (payload: Record<string, unknown>) =>
     request<Record<string, unknown>>('/api/settings', { method: 'PUT', body: JSON.stringify(payload) }),

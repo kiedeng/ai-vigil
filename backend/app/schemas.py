@@ -196,6 +196,7 @@ class NewApiModelOut(BaseModel):
 
 class AlertChannelBase(BaseModel):
     name: str = Field(min_length=1, max_length=200)
+    channel_type: Literal["generic", "wecom_markdown"] = "generic"
     enabled: bool = True
     webhook_url: str
     secret: str | None = None
@@ -209,6 +210,7 @@ class AlertChannelCreate(AlertChannelBase):
 
 class AlertChannelUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=200)
+    channel_type: Literal["generic", "wecom_markdown"] | None = None
     enabled: bool | None = None
     webhook_url: str | None = None
     secret: str | None = None
