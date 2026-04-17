@@ -1,7 +1,17 @@
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any, Generic, Literal, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field
+
+
+T = TypeVar("T")
+
+
+class PageOut(BaseModel, Generic[T]):
+    items: list[T]
+    total: int
+    page: int
+    page_size: int
 
 
 CheckType = Literal[
@@ -95,6 +105,7 @@ class CheckRunOut(BaseModel):
     id: int
     check_id: int
     status: str
+    run_mode: str = "manual"
     duration_ms: int
     response_status_code: int | None = None
     response_summary: str | None = None
@@ -202,6 +213,8 @@ class AlertChannelBase(BaseModel):
     secret: str | None = None
     headers: dict[str, Any] = Field(default_factory=dict)
     cooldown_minutes: int = Field(default=30, ge=1)
+    verify_ssl: bool = True
+    ca_bundle_path: str | None = None
 
 
 class AlertChannelCreate(AlertChannelBase):
@@ -216,6 +229,8 @@ class AlertChannelUpdate(BaseModel):
     secret: str | None = None
     headers: dict[str, Any] | None = None
     cooldown_minutes: int | None = Field(default=None, ge=1)
+    verify_ssl: bool | None = None
+    ca_bundle_path: str | None = None
 
 
 class AlertChannelOut(AlertChannelBase):
@@ -251,6 +266,10 @@ class SettingsOut(BaseModel):
     daily_report_enabled: bool
     daily_report_hour: int
     daily_report_minute: int
+    daily_report_ai_summary_enabled: bool
+    daily_report_theme_color: str
+    daily_report_include_sections: list[str]
+    daily_report_ai_prompt: str
     database_url: str
 
 
@@ -263,6 +282,17 @@ class SettingsUpdate(BaseModel):
     daily_report_enabled: bool | None = None
     daily_report_hour: int | None = Field(default=None, ge=0, le=23)
     daily_report_minute: int | None = Field(default=None, ge=0, le=59)
+    daily_report_ai_summary_enabled: bool | None = None
+    daily_report_theme_color: str | None = None
+    daily_report_include_sections: list[str] | None = None
+    daily_report_ai_prompt: str | None = None
+
+
+class EvaluatorTestOut(BaseModel):
+    status: str
+    passed: bool
+    reason: str
+    model: str
 
 
 class DashboardSummary(BaseModel):

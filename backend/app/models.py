@@ -63,6 +63,7 @@ class CheckRun(Base, TimestampMixin):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     check_id: Mapped[int] = mapped_column(ForeignKey("checks.id", ondelete="CASCADE"), nullable=False, index=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    run_mode: Mapped[str] = mapped_column(String(20), default="manual", nullable=False, index=True)
     duration_ms: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     response_status_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
     response_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -136,6 +137,8 @@ class AlertChannel(Base, TimestampMixin):
     secret: Mapped[str | None] = mapped_column(Text, nullable=True)
     headers: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     cooldown_minutes: Mapped[int] = mapped_column(Integer, default=30, nullable=False)
+    verify_ssl: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    ca_bundle_path: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class AlertEvent(Base, TimestampMixin):

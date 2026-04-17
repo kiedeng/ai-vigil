@@ -58,7 +58,7 @@ async def test_wecom_error_response_is_failed(monkeypatch):
             return {"errcode": 93000, "errmsg": "invalid webhook"}
 
     class FakeClient:
-        def __init__(self, timeout):
+        def __init__(self, timeout, **kwargs):
             self.timeout = timeout
 
         async def __aenter__(self):

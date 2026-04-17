@@ -13,7 +13,7 @@
       type="info"
       :closable="false"
       show-icon
-      title="企业微信机器人请选择“企业微信 Markdown”，Webhook URL 填完整机器人地址，Headers 保持 {}，Secret 留空。"
+      title="企业微信机器人请选择“企业微信 Markdown”，Webhook URL 填完整机器人地址，Headers 保持 {}，Secret 留空；HTTPS 证书异常时可配置 CA bundle，必要时仅对该通道关闭 SSL 校验。"
     />
 
     <el-table :data="channels" stripe>
@@ -42,7 +42,19 @@
 
     <div class="toolbar logs-toolbar">
       <strong>发送日志</strong>
-      <el-button @click="loadEvents">刷新</el-button>
+      <div class="filter-bar">
+        <el-select v-model="eventFilters.status" clearable placeholder="状态" style="width: 120px">
+          <el-option label="sent" value="sent" />
+          <el-option label="failed" value="failed" />
+        </el-select>
+        <el-select v-model="eventFilters.event_type" clearable placeholder="事件" style="width: 150px">
+          <el-option label="test" value="test" />
+          <el-option label="daily_report" value="daily_report" />
+          <el-option label="failure" value="failure" />
+          <el-option label="recovery" value="recovery" />
+        </el-select>
+        <el-button @click="loadEvents">刷新</el-button>
+      </div>
     </div>
     <el-table :data="events" stripe>
       <el-table-column prop="created_at" label="时间" min-width="180">
@@ -63,6 +75,16 @@
         </template>
       </el-table-column>
     </el-table>
+    <el-pagination
+      class="pager"
+      layout="total, sizes, prev, pager, next"
+      :total="eventPagination.total"
+      v-model:current-page="eventPagination.page"
+      v-model:page-size="eventPagination.page_size"
+      :page-sizes="[20, 50, 100]"
+      @current-change="loadEvents"
+      @size-change="loadEvents"
+    />
 
     <el-dialog v-model="dialogVisible" :title="editing?.id ? '编辑通道' : '新增通道'" width="680px">
       <el-form label-position="top">
@@ -93,6 +115,14 @@
           </el-form-item>
           <el-form-item label="启用">
             <el-switch v-model="form.enabled" />
+          </el-form-item>
+        </div>
+        <div class="grid-two">
+          <el-form-item label="校验 HTTPS 证书">
+            <el-switch v-model="form.verify_ssl" />
+          </el-form-item>
+          <el-form-item label="CA bundle 路径">
+            <el-input v-model="form.ca_bundle_path" placeholder="/etc/ssl/certs/ca-certificates.crt" />
           </el-form-item>
         </div>
         <el-form-item label="签名 Secret">
@@ -128,15 +158,26 @@ const form = reactive({
   enabled: true,
   webhook_url: '',
   secret: '',
-  cooldown_minutes: 30
+  cooldown_minutes: 30,
+  verify_ssl: true,
+  ca_bundle_path: ''
 });
+const eventFilters = reactive({ status: '', event_type: '' });
+const eventPagination = reactive({ page: 1, page_size: 20, total: 0 });
 
 async function load() {
   channels.value = await api.channels();
 }
 
 async function loadEvents() {
-  events.value = await api.alertEvents({ limit: 100 });
+  const page = await api.alertEvents({
+    status: eventFilters.status,
+    event_type: eventFilters.event_type,
+    page: eventPagination.page,
+    page_size: eventPagination.page_size
+  });
+  events.value = page.items;
+  eventPagination.total = page.total;
 }
 
 function channelTypeLabel(type: AlertChannelType) {
@@ -155,7 +196,9 @@ function openCreate() {
     enabled: true,
     webhook_url: '',
     secret: '',
-    cooldown_minutes: 30
+    cooldown_minutes: 30,
+    verify_ssl: true,
+    ca_bundle_path: ''
   });
   headersText.value = '{}';
   dialogVisible.value = true;
@@ -169,14 +212,21 @@ function openEdit(row: AlertChannel) {
     enabled: row.enabled,
     webhook_url: row.webhook_url,
     secret: row.secret ?? '',
-    cooldown_minutes: row.cooldown_minutes
+    cooldown_minutes: row.cooldown_minutes,
+    verify_ssl: row.verify_ssl,
+    ca_bundle_path: row.ca_bundle_path ?? ''
   });
   headersText.value = JSON.stringify(row.headers ?? {}, null, 2);
   dialogVisible.value = true;
 }
 
 async function save() {
-  const payload = { ...form, headers: parseJsonObject(headersText.value), secret: form.secret || null };
+  const payload = {
+    ...form,
+    headers: parseJsonObject(headersText.value),
+    secret: form.secret || null,
+    ca_bundle_path: form.ca_bundle_path || null
+  };
   if (editing.value) {
     await api.updateChannel(editing.value.id, payload);
   } else {

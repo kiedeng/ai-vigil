@@ -33,7 +33,7 @@ def run_due_checks() -> None:
             if not _is_due(check):
                 continue
             try:
-                asyncio.run(run_check_once(db, check))
+                asyncio.run(run_check_once(db, check, run_mode="scheduled", notify=True))
             except Exception:
                 logger.exception("Scheduled check failed: %s", check.id)
     finally:

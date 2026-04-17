@@ -5,8 +5,8 @@
       <div class="brand">
         <div class="brand-mark">AI</div>
         <div>
-          <div class="brand-title">AI Eye Monitor</div>
-          <div class="brand-subtitle">服务与模型监控</div>
+          <div class="brand-title">AI Vigil</div>
+          <div class="brand-subtitle">AI 网关与质量监控</div>
         </div>
       </div>
       <nav class="nav">
@@ -65,8 +65,8 @@ const subtitle = computed(() => {
     '/quality': '维护 Golden Set、标准用例和 AI 评估 Prompt',
     '/samples': '上传音频、图片、文档等检查样本并维护版本',
     '/models': '同步 new-api 模型并配置分类规则',
-    '/alerts': '维护通用 Webhook 告警通道',
-    '/settings': '维护运行参数和 new-api 基础配置'
+    '/alerts': '维护 Webhook、企业微信通知和发送日志',
+    '/settings': '维护运行参数、日报和 AI 校验模型'
   };
   return map[route.path] ?? '';
 });

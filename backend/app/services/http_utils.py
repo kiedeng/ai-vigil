@@ -1,4 +1,5 @@
 from typing import Any
+import json
 
 
 def summarize_text(value: str | bytes | None, limit: int = 2000) -> str | None:
@@ -33,6 +34,23 @@ def read_json_path(document: Any, path: str) -> Any:
 
 
 def body_from_config(request_config: dict[str, Any]) -> dict[str, Any]:
+    curl_data = None
+    for key in ("data", "--data", "--data-raw", "--data-binary"):
+        if key in request_config:
+            curl_data = request_config[key]
+            break
+    if curl_data is not None and "body_type" not in request_config:
+        if isinstance(curl_data, (dict, list)):
+            return {"json": curl_data}
+        if isinstance(curl_data, str):
+            text = curl_data.strip()
+            if text:
+                try:
+                    return {"json": json.loads(text)}
+                except json.JSONDecodeError:
+                    return {"content": curl_data}
+        return {"content": curl_data}
+
     body_type = request_config.get("body_type", "json")
     if body_type == "json":
         body = request_config.get("json_body", request_config.get("body"))

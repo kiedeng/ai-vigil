@@ -398,11 +398,14 @@ async def _evaluate_with_ai(db: Session, check: Check, response_text: str) -> di
     expectation = check.ai_config.get("expectation") or check.validation_config.get("ai_expectation")
     if not expectation:
         return {"enabled": False, "passed": True, "reason": "AI evaluation is not configured"}
+    evaluator_config = {**(check.ai_config or {})}
+    if check.new_api_instance_id and not evaluator_config.get("new_api_instance_id"):
+        evaluator_config["new_api_instance_id"] = check.new_api_instance_id
     result = await evaluate_response(
         db,
         expectation=expectation,
         response_text=response_text,
-        evaluator_config=check.ai_config or {},
+        evaluator_config=evaluator_config,
         prompt_id=check.ai_config.get("prompt_id"),
     )
     return {"enabled": True, **result}
@@ -476,7 +479,12 @@ async def execute_check(db: Session, check: Check) -> CheckOutcome:
         return CheckOutcome(False, error=str(exc))
 
 
-async def run_check_once(db: Session, check: Check) -> CheckRun:
+async def run_check_once(
+    db: Session,
+    check: Check,
+    run_mode: str = "manual",
+    notify: bool = True,
+) -> CheckRun:
     started = time.perf_counter()
     outcome = await execute_check(db, check)
 
@@ -484,6 +492,7 @@ async def run_check_once(db: Session, check: Check) -> CheckRun:
     run = CheckRun(
         check_id=check.id,
         status="success" if outcome.ok else "failure",
+        run_mode=run_mode,
         duration_ms=duration_ms,
         response_status_code=outcome.response_status_code,
         response_summary=outcome.response_summary,
@@ -514,6 +523,7 @@ async def run_check_once(db: Session, check: Check) -> CheckRun:
     db.refresh(run)
     db.refresh(state)
 
-    await process_alerts(db, check, run, state)
+    if notify and run_mode != "test":
+        await process_alerts(db, check, run, state)
     db.refresh(run)
     return run

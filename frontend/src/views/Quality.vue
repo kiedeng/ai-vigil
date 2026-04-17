@@ -11,7 +11,7 @@
         :closable="false"
         show-icon
         title="质量回归用于判断模型输出有没有变差"
-        description="普通检查只判断接口是否可用；质量回归会用固定输入反复测试模型，并用规则或 AI 判断输出是否仍符合预期。Golden Set 是一组用例，Golden Case 是其中一条固定输入和期望结果。"
+        description="普通检查只判断接口是否可用；质量回归会用固定输入反复测试模型，并用规则或 AI 判断输出是否仍符合预期。Golden Set 是一组用例，Golden Case 是其中一条固定输入和期望结果。样本管理上传的文件可在 Golden Case 里通过样本 ID 引用。"
       />
       <el-table :data="sets" stripe @row-click="selectSet">
         <el-table-column prop="id" label="ID" width="80" />
@@ -34,6 +34,16 @@
           </template>
         </el-table-column>
       </el-table>
+      <el-pagination
+        class="pager"
+        layout="total, sizes, prev, pager, next"
+        :total="setPagination.total"
+        v-model:current-page="setPagination.page"
+        v-model:page-size="setPagination.page_size"
+        :page-sizes="[20, 50, 100]"
+        @current-change="load"
+        @size-change="load"
+      />
     </section>
 
     <section v-if="selected" class="section">
@@ -81,6 +91,16 @@
         <el-table-column prop="duration_ms" label="耗时 ms" width="100" />
         <el-table-column prop="error" label="失败原因" show-overflow-tooltip />
       </el-table>
+      <el-pagination
+        class="pager"
+        layout="total, sizes, prev, pager, next"
+        :total="runPagination.total"
+        v-model:current-page="runPagination.page"
+        v-model:page-size="runPagination.page_size"
+        :page-sizes="[20, 50, 100]"
+        @current-change="loadRuns"
+        @size-change="loadRuns"
+      />
     </section>
 
     <section class="section">
@@ -173,7 +193,10 @@
         </div>
         <div class="grid-two">
           <el-form-item label="名称"><el-input v-model="caseForm.name" /></el-form-item>
-          <el-form-item label="样本 ID"><el-input-number v-model="caseForm.sample_asset_id" :min="1" style="width: 100%" /></el-form-item>
+          <el-form-item label="样本 ID">
+            <el-input-number v-model="caseForm.sample_asset_id" :min="1" style="width: 100%" />
+            <div class="field-tip">从样本管理复制 ID；留空则只使用输入配置里的 prompt、url、file_path 等字段。</div>
+          </el-form-item>
         </div>
         <el-form-item label="输入配置 JSON">
           <el-input v-model="caseInputText" type="textarea" :rows="8" class="json-editor" />
@@ -232,6 +255,8 @@ const detail = ref<GoldenSet | null>(null);
 const selected = ref<GoldenSet | null>(null);
 const runs = ref<GoldenRun[]>([]);
 const runningSetId = ref<number | null>(null);
+const setPagination = reactive({ page: 1, page_size: 20, total: 0 });
+const runPagination = reactive({ page: 1, page_size: 20, total: 0 });
 
 const setDialog = ref(false);
 const caseDialog = ref(false);
@@ -372,8 +397,13 @@ const promptSchemaText = ref('{}');
 const currentCaseExample = computed(() => caseExamples[selected.value?.check_type ?? setForm.check_type]);
 
 async function load() {
-  const [setRows, promptRows, instanceRows] = await Promise.all([api.goldenSets(), api.evaluatorPrompts(), api.instances()]);
-  sets.value = setRows;
+  const [setRows, promptRows, instanceRows] = await Promise.all([
+    api.goldenSets({ page: setPagination.page, page_size: setPagination.page_size }),
+    api.evaluatorPrompts(),
+    api.instances()
+  ]);
+  sets.value = setRows.items;
+  setPagination.total = setRows.total;
   prompts.value = promptRows;
   instances.value = instanceRows;
 }
@@ -385,7 +415,11 @@ async function selectSet(row: GoldenSet) {
 }
 
 async function loadRuns() {
-  if (selected.value) runs.value = await api.goldenRuns(selected.value.id);
+  if (selected.value) {
+    const page = await api.goldenRuns(selected.value.id, { page: runPagination.page, page_size: runPagination.page_size });
+    runs.value = page.items;
+    runPagination.total = page.total;
+  }
 }
 
 function openSetCreate() {

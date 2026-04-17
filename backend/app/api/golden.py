@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session, joinedload
 
 from ..database import get_db
@@ -12,6 +12,7 @@ from ..schemas import (
     GoldenSetDetail,
     GoldenSetOut,
     GoldenSetUpdate,
+    PageOut,
 )
 from ..security import get_current_user
 from ..services.golden import run_golden_case, run_golden_set
@@ -20,9 +21,22 @@ from ..services.golden import run_golden_case, run_golden_set
 router = APIRouter(prefix="/golden-sets", tags=["golden-sets"], dependencies=[Depends(get_current_user)])
 
 
-@router.get("", response_model=list[GoldenSetOut])
-def list_sets(db: Session = Depends(get_db)) -> list[GoldenSet]:
-    return db.query(GoldenSet).order_by(GoldenSet.id.desc()).all()
+@router.get("", response_model=PageOut[GoldenSetOut])
+def list_sets(
+    search: str | None = None,
+    enabled: bool | None = None,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=200),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    query = db.query(GoldenSet).order_by(GoldenSet.id.desc())
+    if search:
+        query = query.filter(GoldenSet.name.like(f"%{search}%"))
+    if enabled is not None:
+        query = query.filter(GoldenSet.enabled.is_(enabled))
+    total = query.count()
+    items = query.offset((page - 1) * page_size).limit(page_size).all()
+    return {"items": items, "total": total, "page": page, "page_size": page_size}
 
 
 @router.post("", response_model=GoldenSetOut, status_code=status.HTTP_201_CREATED)
@@ -112,7 +126,14 @@ async def run_case(set_id: int, case_id: int, db: Session = Depends(get_db)) -> 
     return await run_golden_case(db, golden_set, case)
 
 
-@router.get("/{set_id}/runs", response_model=list[GoldenRunOut])
-def list_runs(set_id: int, db: Session = Depends(get_db)) -> list[GoldenRun]:
-    return db.query(GoldenRun).filter(GoldenRun.golden_set_id == set_id).order_by(GoldenRun.id.desc()).limit(200).all()
-
+@router.get("/{set_id}/runs", response_model=PageOut[GoldenRunOut])
+def list_runs(
+    set_id: int,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=200),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    query = db.query(GoldenRun).filter(GoldenRun.golden_set_id == set_id).order_by(GoldenRun.id.desc())
+    total = query.count()
+    items = query.offset((page - 1) * page_size).limit(page_size).all()
+    return {"items": items, "total": total, "page": page, "page_size": page_size}

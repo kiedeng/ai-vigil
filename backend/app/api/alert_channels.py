@@ -1,9 +1,9 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..models import AlertChannel, AlertEvent
-from ..schemas import AlertChannelCreate, AlertChannelOut, AlertChannelUpdate, AlertEventOut
+from ..schemas import AlertChannelCreate, AlertChannelOut, AlertChannelUpdate, AlertEventOut, PageOut
 from ..security import get_current_user
 from ..services.alerts import send_test_alert
 from ..services.daily_report import send_daily_report
@@ -17,12 +17,28 @@ def list_channels(db: Session = Depends(get_db)) -> list[AlertChannel]:
     return db.query(AlertChannel).order_by(AlertChannel.id.desc()).all()
 
 
-@router.get("/events", response_model=list[AlertEventOut])
-def list_events(channel_id: int | None = None, limit: int = 100, db: Session = Depends(get_db)) -> list[AlertEvent]:
+@router.get("/events", response_model=PageOut[AlertEventOut])
+def list_events(
+    channel_id: int | None = None,
+    status: str | None = None,
+    event_type: str | None = None,
+    limit: int = Query(default=100, ge=1, le=500),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=200),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
     query = db.query(AlertEvent).order_by(AlertEvent.id.desc())
     if channel_id is not None:
         query = query.filter(AlertEvent.channel_id == channel_id)
-    return query.limit(min(max(limit, 1), 500)).all()
+    if status:
+        query = query.filter(AlertEvent.status == status)
+    if event_type:
+        query = query.filter(AlertEvent.event_type == event_type)
+    if limit != 100 and page == 1:
+        page_size = limit
+    total = query.count()
+    items = query.offset((page - 1) * page_size).limit(page_size).all()
+    return {"items": items, "total": total, "page": page, "page_size": page_size}
 
 
 @router.post("", response_model=AlertChannelOut, status_code=status.HTTP_201_CREATED)

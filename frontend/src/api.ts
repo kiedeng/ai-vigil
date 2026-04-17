@@ -44,6 +44,7 @@ export interface CheckRun {
   id: number;
   check_id: number;
   status: string;
+  run_mode: string;
   duration_ms: number;
   response_status_code?: number;
   response_summary?: string;
@@ -97,6 +98,8 @@ export interface AlertChannel {
   secret?: string | null;
   headers: Record<string, unknown>;
   cooldown_minutes: number;
+  verify_ssl: boolean;
+  ca_bundle_path?: string | null;
 }
 
 export interface AlertEvent {
@@ -207,6 +210,20 @@ export interface TrendSummary {
   };
 }
 
+export interface Page<T> {
+  items: T[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface EvaluatorTestResult {
+  status: string;
+  passed: boolean;
+  reason: string;
+  model: string;
+}
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const token = localStorage.getItem('ai-eye-token');
   const headers = new Headers(options.headers);
@@ -249,19 +266,38 @@ export const api = {
       body: JSON.stringify({ username, password })
     }),
   summary: () => request<DashboardSummary>('/api/dashboard/summary'),
-  checks: () => request<Check[]>('/api/checks'),
+  checks: (params: {
+    page?: number;
+    page_size?: number;
+    search?: string;
+    type?: string;
+    enabled?: boolean | null;
+    status?: string;
+    instance_id?: number | null;
+    category?: string;
+  } = {}) => {
+    const query = new URLSearchParams();
+    Object.entries(params).forEach(([key, value]) => {
+      if (value !== undefined && value !== null && value !== '') query.set(key, String(value));
+    });
+    return request<Page<Check>>(`/api/checks${query.toString() ? `?${query.toString()}` : ''}`);
+  },
   createCheck: (payload: Partial<Check>) => request<Check>('/api/checks', { method: 'POST', body: JSON.stringify(payload) }),
   updateCheck: (id: number, payload: Partial<Check>) =>
     request<Check>(`/api/checks/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
   deleteCheck: (id: number) => request<void>(`/api/checks/${id}`, { method: 'DELETE' }),
   runCheck: (id: number) => request<CheckRun>(`/api/checks/${id}/run`, { method: 'POST' }),
+  testRunCheck: (id: number) => request<CheckRun>(`/api/checks/${id}/test-run`, { method: 'POST' }),
   runs: (id: number) => request<CheckRun[]>(`/api/checks/${id}/runs`),
-  allRuns: (params: { check_id?: number | null; status?: string; limit?: number }) => {
+  allRuns: (params: { check_id?: number | null; status?: string; run_mode?: string; limit?: number; page?: number; page_size?: number }) => {
     const query = new URLSearchParams();
     if (params.check_id) query.set('check_id', String(params.check_id));
     if (params.status) query.set('status', params.status);
+    if (params.run_mode) query.set('run_mode', params.run_mode);
     if (params.limit) query.set('limit', String(params.limit));
-    return request<CheckRun[]>(`/api/runs?${query.toString()}`);
+    if (params.page) query.set('page', String(params.page));
+    if (params.page_size) query.set('page_size', String(params.page_size));
+    return request<Page<CheckRun>>(`/api/runs?${query.toString()}`);
   },
   instances: () => request<NewApiInstance[]>('/api/new-api/instances'),
   createInstance: (payload: Partial<NewApiInstance> & { api_key?: string | null }) =>
@@ -271,10 +307,13 @@ export const api = {
   deleteInstance: (id: number) => request<void>(`/api/new-api/instances/${id}`, { method: 'DELETE' }),
   setDefaultInstance: (id: number) => request<NewApiInstance>(`/api/new-api/instances/${id}/default`, { method: 'POST' }),
   testInstance: (id: number) => request(`/api/new-api/instances/${id}/test`, { method: 'POST' }),
-  models: (params: { instance_id?: number | null } = {}) => {
+  models: (params: { instance_id?: number | null; search?: string; page?: number; page_size?: number } = {}) => {
     const query = new URLSearchParams();
     if (params.instance_id) query.set('instance_id', String(params.instance_id));
-    return request<NewApiModel[]>(`/api/new-api/models${query.toString() ? `?${query.toString()}` : ''}`);
+    if (params.search) query.set('search', params.search);
+    if (params.page) query.set('page', String(params.page));
+    if (params.page_size) query.set('page_size', String(params.page_size));
+    return request<Page<NewApiModel>>(`/api/new-api/models${query.toString() ? `?${query.toString()}` : ''}`);
   },
   syncModels: (instanceId?: number | null) =>
     request<NewApiModel[]>(`/api/new-api/models/sync${instanceId ? `?instance_id=${instanceId}` : ''}`, { method: 'POST' }),
@@ -293,17 +332,28 @@ export const api = {
   deleteChannel: (id: number) => request<void>(`/api/alert-channels/${id}`, { method: 'DELETE' }),
   testChannel: (id: number) => request<AlertEvent>(`/api/alert-channels/${id}/test`, { method: 'POST' }),
   testDailyReport: () => request<AlertEvent[]>('/api/alert-channels/daily-report/test', { method: 'POST' }),
-  alertEvents: (params: { channel_id?: number | null; limit?: number } = {}) => {
+  alertEvents: (params: { channel_id?: number | null; status?: string; event_type?: string; limit?: number; page?: number; page_size?: number } = {}) => {
     const query = new URLSearchParams();
     if (params.channel_id) query.set('channel_id', String(params.channel_id));
+    if (params.status) query.set('status', params.status);
+    if (params.event_type) query.set('event_type', params.event_type);
     if (params.limit) query.set('limit', String(params.limit));
-    return request<AlertEvent[]>(`/api/alert-channels/events${query.toString() ? `?${query.toString()}` : ''}`);
+    if (params.page) query.set('page', String(params.page));
+    if (params.page_size) query.set('page_size', String(params.page_size));
+    return request<Page<AlertEvent>>(`/api/alert-channels/events${query.toString() ? `?${query.toString()}` : ''}`);
   },
   settings: () => request<Record<string, unknown>>('/api/settings'),
   updateSettings: (payload: Record<string, unknown>) =>
     request<Record<string, unknown>>('/api/settings', { method: 'PUT', body: JSON.stringify(payload) }),
+  testEvaluator: () => request<EvaluatorTestResult>('/api/settings/evaluator/test', { method: 'POST' }),
   trends: () => request<TrendSummary>('/api/analytics/trends'),
-  samples: () => request<SampleAsset[]>('/api/samples'),
+  samples: (params: { search?: string; page?: number; page_size?: number } = {}) => {
+    const query = new URLSearchParams();
+    if (params.search) query.set('search', params.search);
+    if (params.page) query.set('page', String(params.page));
+    if (params.page_size) query.set('page_size', String(params.page_size));
+    return request<Page<SampleAsset>>(`/api/samples${query.toString() ? `?${query.toString()}` : ''}`);
+  },
   uploadSample: (payload: { file: File; logical_name: string; description?: string }) => {
     const formData = new FormData();
     formData.append('file', payload.file);
@@ -316,7 +366,14 @@ export const api = {
     request<EvaluatorPrompt>('/api/evaluator-prompts', { method: 'POST', body: JSON.stringify(payload) }),
   updateEvaluatorPrompt: (id: number, payload: Partial<EvaluatorPrompt>) =>
     request<EvaluatorPrompt>(`/api/evaluator-prompts/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
-  goldenSets: () => request<GoldenSet[]>('/api/golden-sets'),
+  goldenSets: (params: { search?: string; enabled?: boolean | null; page?: number; page_size?: number } = {}) => {
+    const query = new URLSearchParams();
+    if (params.search) query.set('search', params.search);
+    if (params.enabled !== undefined && params.enabled !== null) query.set('enabled', String(params.enabled));
+    if (params.page) query.set('page', String(params.page));
+    if (params.page_size) query.set('page_size', String(params.page_size));
+    return request<Page<GoldenSet>>(`/api/golden-sets${query.toString() ? `?${query.toString()}` : ''}`);
+  },
   goldenSet: (id: number) => request<GoldenSet>(`/api/golden-sets/${id}`),
   createGoldenSet: (payload: Partial<GoldenSet>) =>
     request<GoldenSet>('/api/golden-sets', { method: 'POST', body: JSON.stringify(payload) }),
@@ -330,7 +387,6 @@ export const api = {
   deleteGoldenCase: (setId: number, caseId: number) =>
     request<void>(`/api/golden-sets/${setId}/cases/${caseId}`, { method: 'DELETE' }),
   runGoldenSet: (setId: number) => request<GoldenRun[]>(`/api/golden-sets/${setId}/run`, { method: 'POST' }),
-  goldenRuns: (setId: number) => request<GoldenRun[]>(`/api/golden-sets/${setId}/runs`),
   importConfig: (path?: string) =>
     request<{
       success: boolean;
@@ -339,6 +395,12 @@ export const api = {
       updated: Record<string, number>;
       errors: Record<string, string[]>;
     }>(`/api/config-import`, { method: 'POST', body: JSON.stringify(path ? { path } : {}) }),
+  goldenRuns: (setId: number, params: { page?: number; page_size?: number } = {}) => {
+    const query = new URLSearchParams();
+    if (params.page) query.set('page', String(params.page));
+    if (params.page_size) query.set('page_size', String(params.page_size));
+    return request<Page<GoldenRun>>(`/api/golden-sets/${setId}/runs${query.toString() ? `?${query.toString()}` : ''}`);
+  }
 };
 
 export function parseJsonObject(text: string): Record<string, unknown> {

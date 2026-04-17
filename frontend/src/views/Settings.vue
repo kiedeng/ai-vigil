@@ -2,8 +2,19 @@
   <section class="section">
     <div class="toolbar">
       <strong>系统设置</strong>
-      <el-button type="primary" @click="save">保存</el-button>
+      <div>
+        <el-button @click="testEvaluator">测试 AI 校验模型</el-button>
+        <el-button type="primary" @click="save">保存</el-button>
+      </div>
     </div>
+    <el-alert
+      class="form-help"
+      type="info"
+      :closable="false"
+      show-icon
+      title="设置说明"
+      description="默认超时和失败阈值会影响新建检查项；日报时间按 Asia/Shanghai；AI 校验模型用于接口内容+AI、Golden Set AI 评估和日报 AI 总结。"
+    />
     <el-form label-position="top" style="max-width: 760px">
       <el-form-item label="AI 校验模型">
         <el-input v-model="form.evaluator_model" />
@@ -35,6 +46,31 @@
           </div>
         </el-form-item>
       </div>
+      <div class="grid-two">
+        <el-form-item label="日报 AI 总结">
+          <el-switch v-model="form.daily_report_ai_summary_enabled" />
+        </el-form-item>
+        <el-form-item label="日报主题色">
+          <el-select v-model="form.daily_report_theme_color" style="width: 100%">
+            <el-option label="绿色/正常" value="info" />
+            <el-option label="黄色/关注" value="warning" />
+            <el-option label="灰色/备注" value="comment" />
+          </el-select>
+        </el-form-item>
+      </div>
+      <el-form-item label="日报模块">
+        <el-checkbox-group v-model="form.daily_report_include_sections">
+          <el-checkbox label="summary">核心摘要</el-checkbox>
+          <el-checkbox label="ai_summary">AI 总结</el-checkbox>
+          <el-checkbox label="instances">new-api 实例</el-checkbox>
+          <el-checkbox label="current_failures">当前失败项</el-checkbox>
+          <el-checkbox label="recent_failures">近 24 小时失败</el-checkbox>
+          <el-checkbox label="disabled_failures">禁用失败提示</el-checkbox>
+        </el-checkbox-group>
+      </el-form-item>
+      <el-form-item label="日报 AI 总结 Prompt">
+        <el-input v-model="form.daily_report_ai_prompt" type="textarea" :rows="4" />
+      </el-form-item>
       <el-form-item label="数据库连接">
         <el-input v-model="databaseUrl" disabled />
       </el-form-item>
@@ -95,7 +131,11 @@ const form = reactive({
   alert_cooldown_minutes: 30,
   daily_report_enabled: true,
   daily_report_hour: 9,
-  daily_report_minute: 0
+  daily_report_minute: 0,
+  daily_report_ai_summary_enabled: true,
+  daily_report_theme_color: 'info',
+  daily_report_include_sections: ['summary', 'ai_summary', 'instances', 'current_failures', 'recent_failures', 'disabled_failures'],
+  daily_report_ai_prompt: ''
 });
 
 async function load() {
@@ -108,7 +148,11 @@ async function load() {
     alert_cooldown_minutes: settings.alert_cooldown_minutes,
     daily_report_enabled: settings.daily_report_enabled,
     daily_report_hour: settings.daily_report_hour,
-    daily_report_minute: settings.daily_report_minute
+    daily_report_minute: settings.daily_report_minute,
+    daily_report_ai_summary_enabled: settings.daily_report_ai_summary_enabled,
+    daily_report_theme_color: settings.daily_report_theme_color,
+    daily_report_include_sections: settings.daily_report_include_sections,
+    daily_report_ai_prompt: settings.daily_report_ai_prompt
   });
   databaseUrl.value = String(settings.database_url ?? '');
 }
@@ -141,6 +185,12 @@ function downloadTemplate() {
   link.href = '/ai-vigil.yaml.example';
   link.download = 'ai-vigil.yaml.example';
   link.click();
+}
+
+async function testEvaluator() {
+  const result = await api.testEvaluator();
+  if (result.passed) ElMessage.success(`AI 校验模型可用：${result.model}`);
+  else ElMessage.error(result.reason || 'AI 校验模型测试失败');
 }
 
 onMounted(load);

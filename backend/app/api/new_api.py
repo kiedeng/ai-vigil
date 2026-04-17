@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session, joinedload
 
 from ..database import get_db
@@ -9,6 +9,7 @@ from ..schemas import (
     NewApiInstanceTestOut,
     NewApiInstanceUpdate,
     NewApiModelOut,
+    PageOut,
 )
 from ..security import get_current_user
 from ..services.new_api import sync_all_new_api_models, sync_new_api_models
@@ -86,18 +87,25 @@ async def test_new_api_instance(instance_id: int, db: Session = Depends(get_db))
         raise HTTPException(status_code=502, detail=f"new-api instance test failed: {exc}") from exc
 
 
-@router.get("/models", response_model=list[NewApiModelOut])
+@router.get("/models", response_model=PageOut[NewApiModelOut])
 def list_models(
     category: str | None = None,
     instance_id: int | None = None,
+    search: str | None = None,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=200),
     db: Session = Depends(get_db),
-) -> list[NewApiModel]:
+) -> dict[str, object]:
     query = db.query(NewApiModel).options(joinedload(NewApiModel.instance)).order_by(NewApiModel.model_id.asc())
     if category:
         query = query.filter(NewApiModel.category == category)
     if instance_id:
         query = query.filter(NewApiModel.instance_id == instance_id)
-    return query.all()
+    if search:
+        query = query.filter(NewApiModel.model_id.like(f"%{search}%"))
+    total = query.count()
+    items = query.offset((page - 1) * page_size).limit(page_size).all()
+    return {"items": items, "total": total, "page": page, "page_size": page_size}
 
 
 @router.post("/models/sync", response_model=list[NewApiModelOut])

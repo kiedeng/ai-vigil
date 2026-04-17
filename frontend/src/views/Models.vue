@@ -5,6 +5,14 @@
         <strong>new-api 实例</strong>
         <el-button type="primary" @click="openInstanceCreate">新增实例</el-button>
       </div>
+      <el-alert
+        class="form-help"
+        type="info"
+        :closable="false"
+        show-icon
+        title="使用提示"
+        description="实例代表一个 new-api 网关，例如测试环境和生产环境；模型同步会读取 /v1/models，分类规则命中后可自动创建检查项。"
+      />
       <el-table :data="instances" stripe>
         <el-table-column prop="name" label="名称" min-width="140" />
         <el-table-column prop="base_url" label="Base URL" min-width="240" show-overflow-tooltip />
@@ -37,6 +45,7 @@
           <el-select v-model="selectedInstanceId" clearable placeholder="全部实例" style="width: 180px" @change="loadModels">
             <el-option v-for="item in instances" :key="item.id" :label="item.name" :value="item.id" />
           </el-select>
+          <el-input v-model="modelSearch" clearable placeholder="搜索模型 ID" style="width: 180px" @keyup.enter="loadModels" />
           <el-button :loading="syncing" @click="syncSelected">同步当前实例</el-button>
           <el-button type="primary" :loading="syncing" @click="syncAll">同步全部</el-button>
         </div>
@@ -50,6 +59,16 @@
         <el-table-column prop="check_id" label="检查 ID" width="100" />
         <el-table-column prop="last_seen_at" label="最后发现" width="190" />
       </el-table>
+      <el-pagination
+        class="pager"
+        layout="total, sizes, prev, pager, next"
+        :total="modelPagination.total"
+        v-model:current-page="modelPagination.page"
+        v-model:page-size="modelPagination.page_size"
+        :page-sizes="[20, 50, 100]"
+        @current-change="loadModels"
+        @size-change="loadModels"
+      />
     </section>
 
     <el-dialog v-model="instanceDialogVisible" :title="editingInstance?.id ? '编辑实例' : '新增实例'" width="680px">
@@ -174,6 +193,8 @@ const models = ref<NewApiModel[]>([]);
 const rules = ref<ModelRule[]>([]);
 const syncing = ref(false);
 const selectedInstanceId = ref<number | null>(null);
+const modelSearch = ref('');
+const modelPagination = reactive({ page: 1, page_size: 20, total: 0 });
 const instanceDialogVisible = ref(false);
 const dialogVisible = ref(false);
 const editingInstance = ref<NewApiInstance | null>(null);
@@ -206,7 +227,14 @@ async function load() {
 }
 
 async function loadModels() {
-  models.value = await api.models({ instance_id: selectedInstanceId.value });
+  const page = await api.models({
+    instance_id: selectedInstanceId.value,
+    search: modelSearch.value,
+    page: modelPagination.page,
+    page_size: modelPagination.page_size
+  });
+  models.value = page.items;
+  modelPagination.total = page.total;
 }
 
 function openInstanceCreate() {

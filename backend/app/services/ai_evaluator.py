@@ -91,19 +91,24 @@ async def evaluate_response(
             "score": score,
             "reason": str(parsed.get("reason", "")),
             "model": model,
+            "instance_id": instance.id,
+            "instance_name": instance.name,
             "prompt_id": prompt_row.id if prompt_row else None,
             "prompt_version": prompt_row.version if prompt_row else None,
             "raw": content[:2000],
         }
     except httpx.HTTPStatusError as exc:
+        body = exc.response.text[:1000] if exc.response is not None else ""
         return {
             "enabled": True,
             "status": "evaluator_http_error",
             "passed": False,
             "confidence": 0,
             "score": 0,
-            "reason": f"Evaluator HTTP error: {exc.response.status_code}",
+            "reason": f"Evaluator HTTP error: {exc.response.status_code}; {body}",
             "model": model,
+            "instance_id": instance.id,
+            "instance_name": instance.name,
         }
     except Exception as exc:
         return {
@@ -114,4 +119,6 @@ async def evaluate_response(
             "score": 0,
             "reason": str(exc),
             "model": model,
+            "instance_id": instance.id,
+            "instance_name": instance.name,
         }

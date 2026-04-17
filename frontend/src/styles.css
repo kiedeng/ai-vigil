@@ -1,6 +1,6 @@
 :root {
-  color: #1f2937;
-  background: #f5f7fb;
+  color: #1d2433;
+  background: #f4f7fb;
   font-family: Inter, "Segoe UI", "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
   font-size: 16px;
   letter-spacing: 0;
@@ -14,6 +14,7 @@ body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
+  background: #f4f7fb;
 }
 
 button,
@@ -28,14 +29,19 @@ button,
 
 .layout {
   display: grid;
-  grid-template-columns: 236px minmax(0, 1fr);
+  grid-template-columns: 248px minmax(0, 1fr);
   min-height: 100vh;
 }
 
 .sidebar {
-  background: #10241f;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+  background: #12332b;
   color: #f8fafc;
   padding: 24px 18px;
+  box-shadow: 8px 0 24px rgba(18, 51, 43, 0.14);
 }
 
 .brand {
@@ -49,7 +55,7 @@ button,
   width: 38px;
   height: 38px;
   border-radius: 8px;
-  background: #20b486;
+  background: #26c98f;
   display: grid;
   place-items: center;
   color: #071612;
@@ -84,13 +90,13 @@ button,
 
 .nav a.router-link-active,
 .nav a:hover {
-  background: #1f6f5b;
+  background: #247a62;
   color: #ffffff;
 }
 
 .main {
   min-width: 0;
-  padding: 24px;
+  padding: 28px;
 }
 
 .topbar {
@@ -114,10 +120,11 @@ button,
 
 .section {
   background: #ffffff;
-  border: 1px solid #dbe4ee;
+  border: 1px solid #d9e4ef;
   border-radius: 8px;
-  padding: 18px;
-  margin-bottom: 18px;
+  padding: 20px;
+  margin-bottom: 20px;
+  box-shadow: 0 10px 28px rgba(30, 64, 99, 0.06);
 }
 
 .toolbar {
@@ -138,7 +145,7 @@ button,
 
 .metric {
   background: #ffffff;
-  border: 1px solid #dbe4ee;
+  border: 1px solid #d9e4ef;
   border-radius: 8px;
   padding: 16px;
   min-height: 104px;
@@ -165,6 +172,26 @@ button,
   font-family: "Cascadia Code", Consolas, monospace;
 }
 
+.filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.pager {
+  justify-content: flex-end;
+  margin-top: 16px;
+}
+
+.field-tip {
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.5;
+  margin-top: 6px;
+}
+
 .form-help {
   margin-bottom: 16px;
 }
@@ -185,7 +212,7 @@ button,
 }
 
 .example-panel {
-  border: 1px solid #dbe4ee;
+  border: 1px solid #d9e4ef;
   border-radius: 8px;
   padding: 14px;
   background: #f8fbfd;
@@ -247,6 +274,7 @@ button,
 
   .sidebar {
     position: static;
+    height: auto;
     padding: 16px;
   }
 
