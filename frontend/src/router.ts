@@ -5,6 +5,7 @@ import Checks from './views/Checks.vue';
 import Runs from './views/Runs.vue';
 import Models from './views/Models.vue';
 import Quality from './views/Quality.vue';
+import ModelPerformance from './views/ModelPerformance.vue';
 import Samples from './views/Samples.vue';
 import Trends from './views/Trends.vue';
 import Alerts from './views/Alerts.vue';
@@ -19,6 +20,7 @@ export const router = createRouter({
     { path: '/runs', component: Runs },
     { path: '/trends', component: Trends },
     { path: '/quality', component: Quality },
+    { path: '/model-performance', component: ModelPerformance },
     { path: '/samples', component: Samples },
     { path: '/models', component: Models },
     { path: '/alerts', component: Alerts },

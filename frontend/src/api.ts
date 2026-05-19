@@ -188,6 +188,56 @@ export interface GoldenRun {
   created_at: string;
 }
 
+export interface ModelPerformanceTest {
+  id: number;
+  name: string;
+  enabled: boolean;
+  new_api_instance_id?: number | null;
+  model_name: string;
+  endpoint: string;
+  dataset_config: Record<string, unknown>;
+  load_config: Record<string, unknown>;
+  threshold_config: Record<string, unknown>;
+  extra_args: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ModelPerformanceRun {
+  id: number;
+  test_id: number;
+  status: string;
+  duration_ms: number;
+  started_at?: string | null;
+  finished_at?: string | null;
+  output_dir?: string | null;
+  command: string[];
+  summary: Record<string, unknown>;
+  chart_data: Record<string, unknown>;
+  analysis: Record<string, unknown>;
+  error?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ModelPerformanceRunLog {
+  content: string;
+  next_offset: number;
+  done: boolean;
+}
+
+export interface ModelPerformanceDataset {
+  name: string;
+  dataset: 'openqa' | 'line_by_line';
+  source: 'builtin' | 'uploaded';
+  dataset_path: string;
+  description?: string | null;
+  size_bytes: number;
+  item_count: number;
+  updated_at?: string | null;
+  preview: string[];
+}
+
 export interface TrendSummary {
   windows: Record<string, {
     label: string;
@@ -400,6 +450,47 @@ export const api = {
     if (params.page) query.set('page', String(params.page));
     if (params.page_size) query.set('page_size', String(params.page_size));
     return request<Page<GoldenRun>>(`/api/golden-sets/${setId}/runs${query.toString() ? `?${query.toString()}` : ''}`);
+  },
+  modelPerformanceTests: (params: { search?: string; enabled?: boolean | null; instance_id?: number | null; page?: number; page_size?: number } = {}) => {
+    const query = new URLSearchParams();
+    if (params.search) query.set('search', params.search);
+    if (params.enabled !== undefined && params.enabled !== null) query.set('enabled', String(params.enabled));
+    if (params.instance_id) query.set('instance_id', String(params.instance_id));
+    if (params.page) query.set('page', String(params.page));
+    if (params.page_size) query.set('page_size', String(params.page_size));
+    return request<Page<ModelPerformanceTest>>(`/api/model-performance-tests${query.toString() ? `?${query.toString()}` : ''}`);
+  },
+  createModelPerformanceTest: (payload: Partial<ModelPerformanceTest>) =>
+    request<ModelPerformanceTest>('/api/model-performance-tests', { method: 'POST', body: JSON.stringify(payload) }),
+  updateModelPerformanceTest: (id: number, payload: Partial<ModelPerformanceTest>) =>
+    request<ModelPerformanceTest>(`/api/model-performance-tests/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
+  deleteModelPerformanceTest: (id: number) => request<void>(`/api/model-performance-tests/${id}`, { method: 'DELETE' }),
+  runModelPerformanceTest: (id: number) =>
+    request<ModelPerformanceRun>(`/api/model-performance-tests/${id}/run`, { method: 'POST' }),
+  modelPerformanceRuns: (testId: number, params: { page?: number; page_size?: number } = {}) => {
+    const query = new URLSearchParams();
+    if (params.page) query.set('page', String(params.page));
+    if (params.page_size) query.set('page_size', String(params.page_size));
+    return request<Page<ModelPerformanceRun>>(`/api/model-performance-tests/${testId}/runs${query.toString() ? `?${query.toString()}` : ''}`);
+  },
+  modelPerformanceRun: (runId: number) => request<ModelPerformanceRun>(`/api/model-performance-runs/${runId}`),
+  modelPerformanceRunLogs: (runId: number, offset = 0) =>
+    request<ModelPerformanceRunLog>(`/api/model-performance-runs/${runId}/logs?offset=${offset}`),
+  modelPerformanceDatasets: () => request<ModelPerformanceDataset[]>('/api/model-performance-datasets'),
+  modelPerformanceDatasetPreview: (name: string) =>
+    request<ModelPerformanceDataset>(`/api/model-performance-datasets/${encodeURIComponent(name)}/preview`),
+  uploadModelPerformanceDataset: (payload: {
+    file: File;
+    name: string;
+    dataset: 'openqa' | 'line_by_line';
+    description?: string;
+  }) => {
+    const formData = new FormData();
+    formData.append('file', payload.file);
+    formData.append('name', payload.name);
+    formData.append('dataset', payload.dataset);
+    if (payload.description) formData.append('description', payload.description);
+    return uploadRequest<ModelPerformanceDataset>('/api/model-performance-datasets', formData);
   }
 };
 

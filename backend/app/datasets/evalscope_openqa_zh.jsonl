@@ -1,0 +1,8 @@
+{"question":"请用一句话说明什么是大模型上下文窗口。"}
+{"question":"给出三个判断模型接口是否稳定的指标。"}
+{"question":"请把下面这句话改写得更正式：这个接口今天有点慢。"}
+{"question":"用 JSON 返回本次测试状态，字段包含 status 和 reason。"}
+{"question":"解释并发数、吞吐量和延迟之间的关系。"}
+{"question":"请列出排查 API 429 错误的三个步骤。"}
+{"question":"把 128、256、512 三个数字按从大到小排序，并只输出数组。"}
+{"question":"用中文总结：Latency p95 is more useful than average latency for user-facing services."}

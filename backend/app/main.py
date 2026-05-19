@@ -15,6 +15,7 @@ from .api import (
     dashboard,
     evaluator_prompts,
     golden,
+    model_performance,
     model_rules,
     new_api,
     runs,
@@ -62,6 +63,9 @@ app.include_router(model_rules.router, prefix=api_prefix)
 app.include_router(samples.router, prefix=api_prefix)
 app.include_router(evaluator_prompts.router, prefix=api_prefix)
 app.include_router(golden.router, prefix=api_prefix)
+app.include_router(model_performance.router, prefix=api_prefix)
+app.include_router(model_performance.runs_router, prefix=api_prefix)
+app.include_router(model_performance.datasets_router, prefix=api_prefix)
 app.include_router(alert_channels.router, prefix=api_prefix)
 app.include_router(settings.router, prefix=api_prefix)
 app.include_router(config_import.router, prefix=api_prefix)

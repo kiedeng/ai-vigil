@@ -436,6 +436,87 @@ class GoldenSetDetail(GoldenSetOut):
     cases: list[GoldenCaseOut] = Field(default_factory=list)
 
 
+class ModelPerformanceTestBase(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    enabled: bool = True
+    new_api_instance_id: int | None = None
+    model_name: str = Field(min_length=1, max_length=255)
+    endpoint: str = "/v1/chat/completions"
+    dataset_config: dict[str, Any] = Field(default_factory=dict)
+    load_config: dict[str, Any] = Field(default_factory=dict)
+    threshold_config: dict[str, Any] = Field(default_factory=dict)
+    extra_args: dict[str, Any] = Field(default_factory=dict)
+
+
+class ModelPerformanceTestCreate(ModelPerformanceTestBase):
+    pass
+
+
+class ModelPerformanceTestUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    enabled: bool | None = None
+    new_api_instance_id: int | None = None
+    model_name: str | None = Field(default=None, min_length=1, max_length=255)
+    endpoint: str | None = None
+    dataset_config: dict[str, Any] | None = None
+    load_config: dict[str, Any] | None = None
+    threshold_config: dict[str, Any] | None = None
+    extra_args: dict[str, Any] | None = None
+
+
+class ModelPerformanceTestOut(ModelPerformanceTestBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class ModelPerformanceRunOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    test_id: int
+    status: str
+    duration_ms: int
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    output_dir: str | None = None
+    command: list[str]
+    summary: dict[str, Any]
+    chart_data: dict[str, Any]
+    analysis: dict[str, Any]
+    error: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class ModelPerformanceRunLogOut(BaseModel):
+    content: str
+    next_offset: int
+    done: bool
+
+
+class ModelPerformanceDatasetOut(BaseModel):
+    name: str
+    dataset: Literal["openqa", "line_by_line"]
+    source: Literal["builtin", "uploaded"]
+    dataset_path: str
+    description: str | None = None
+    size_bytes: int
+    item_count: int
+    updated_at: datetime | None = None
+    preview: list[str] = Field(default_factory=list)
+
+
+class ModelPerformanceDatasetPreviewOut(BaseModel):
+    name: str
+    dataset: Literal["openqa", "line_by_line"]
+    dataset_path: str
+    item_count: int
+    preview: list[str]
+
+
 class TrendBucket(BaseModel):
     label: str
     total: int

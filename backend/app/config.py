@@ -32,6 +32,8 @@ class Settings(BaseSettings):
 
     frontend_dist_dir: str = str(PROJECT_ROOT / "frontend" / "dist")
     sample_storage_dir: str = str(PROJECT_ROOT / "data" / "samples")
+    model_performance_storage_dir: str = str(PROJECT_ROOT / "data" / "model_perf_runs")
+    model_performance_dataset_dir: str = str(PROJECT_ROOT / "data" / "model_perf_datasets")
 
     model_config = SettingsConfigDict(
         env_file=str(PROJECT_ROOT / ".env"),
