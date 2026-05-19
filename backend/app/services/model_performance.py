@@ -297,20 +297,28 @@ def analyze_evalscope_output(output_dir: Path, threshold_config: dict[str, Any])
     sqlite_summary = _summarize_sqlite_results(output_dir)
     if sqlite_summary and not points:
         points = [sqlite_summary]
+    points = [_with_cost(point, threshold_config) for point in points]
 
     summary = _summary_from_points(points, sqlite_summary)
     chart_data = {
         "points": points,
         "x_axis": [point.get("parallel") for point in points],
         "throughput": [point.get("throughput") for point in points],
+        "success_rate": [point.get("success_rate") for point in points],
         "error_rate": [point.get("error_rate") for point in points],
         "avg_latency_ms": [point.get("avg_latency_ms") for point in points],
+        "p50_latency_ms": [point.get("p50_latency_ms") for point in points],
+        "p90_latency_ms": [point.get("p90_latency_ms") for point in points],
         "p95_latency_ms": [point.get("p95_latency_ms") for point in points],
         "p99_latency_ms": [point.get("p99_latency_ms") for point in points],
         "tokens_per_second": [point.get("tokens_per_second") for point in points],
         "total_tokens_per_second": [point.get("total_tokens_per_second") for point in points],
         "ttft_ms": [point.get("ttft_ms") for point in points],
+        "ttft_p95_ms": [point.get("ttft_p95_ms") for point in points],
         "tpot_ms": [point.get("tpot_ms") for point in points],
+        "tpot_p95_ms": [point.get("tpot_p95_ms") for point in points],
+        "estimated_cost": [point.get("estimated_cost") for point in points],
+        "cost_per_1k_requests": [point.get("cost_per_1k_requests") for point in points],
     }
     analysis = _build_analysis(points, summary, threshold_config)
     return summary, chart_data, analysis
@@ -333,6 +341,15 @@ def _percentile_value(items: Any, percentile: str, key: str) -> float | None:
     return None
 
 
+def _float_or_none(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _extract_points_from_json(output_dir: Path) -> list[dict[str, Any]]:
     points: list[dict[str, Any]] = []
     for summary_path in sorted(output_dir.rglob("benchmark_summary.json")):
@@ -342,13 +359,17 @@ def _extract_points_from_json(output_dir: Path) -> list[dict[str, Any]]:
         percentiles = _json_file(summary_path.with_name("benchmark_percentile.json"))
         total = int(summary.get("Total Requests") or 0)
         failed = int(summary.get("Failed Requests") or 0)
+        success = int(summary.get("Success Requests") or 0)
         concurrency = int(summary.get("Concurrency") or 0)
+        avg_input_tokens = _float_or_none(summary.get("Avg Input Tokens"))
+        avg_output_tokens = _float_or_none(summary.get("Avg Output Tokens"))
         point = {
             "parallel": concurrency,
             "total_requests": total,
-            "success_requests": int(summary.get("Success Requests") or 0),
+            "success_requests": success,
             "failed_requests": failed,
             "error_rate": round(failed / total, 4) if total else None,
+            "success_rate": round(success / total, 4) if total else None,
             "test_duration_s": summary.get("Test Duration (s)"),
             "throughput": summary.get("Req Throughput (req/s)"),
             "avg_latency_s": summary.get("Avg Latency (s)"),
@@ -366,8 +387,13 @@ def _extract_points_from_json(output_dir: Path) -> list[dict[str, Any]]:
             "tpot_ms": summary.get("TPOT (ms)"),
             "tpot_p95_ms": _percentile_value(percentiles, "95%", "TPOT (ms)"),
             "itl_ms": summary.get("ITL (ms)"),
-            "avg_input_tokens": summary.get("Avg Input Tokens"),
-            "avg_output_tokens": summary.get("Avg Output Tokens"),
+            "avg_input_tokens": avg_input_tokens,
+            "avg_output_tokens": avg_output_tokens,
+            "input_tokens": round(avg_input_tokens * total, 2) if avg_input_tokens is not None and total else None,
+            "output_tokens": round(avg_output_tokens * total, 2) if avg_output_tokens is not None and total else None,
+            "total_tokens": round((avg_input_tokens + avg_output_tokens) * total, 2)
+            if avg_input_tokens is not None and avg_output_tokens is not None and total
+            else None,
             "tokens_per_second": summary.get("Output Throughput (tok/s)"),
             "total_tokens_per_second": summary.get("Total Throughput (tok/s)"),
             "decode_tokens_per_second": _percentile_value(percentiles, "50%", "Decode (tok/s)"),
@@ -459,6 +485,7 @@ def _summarize_sqlite_results(output_dir: Path) -> dict[str, Any] | None:
                     "success_requests": success_count,
                     "failed_requests": total - success_count,
                     "error_rate": round((total - success_count) / total, 4),
+                    "success_rate": round(success_count / total, 4),
                     "avg_latency_ms": round(sum(latencies) / len(latencies), 2) if latencies else None,
                     "p50_latency_ms": _percentile(latencies, 0.50),
                     "p90_latency_ms": _percentile(latencies, 0.90),
@@ -477,16 +504,30 @@ def _summary_from_points(points: list[dict[str, Any]], sqlite_summary: dict[str,
     success_requests = sum(int(item.get("success_requests") or 0) for item in points) or None
     failed_sum = sum(int(item.get("failed_requests") or 0) for item in points)
     failed_requests = failed_sum if points else None
+    input_tokens = _sum_numeric(points, "input_tokens")
+    output_tokens = _sum_numeric(points, "output_tokens")
+    total_tokens = _sum_numeric(points, "total_tokens")
+    estimated_cost = _sum_numeric(points, "estimated_cost")
     summary = {
         "total_requests": total_requests or (sqlite_summary.get("total_requests") if sqlite_summary else None),
         "success_requests": success_requests or (sqlite_summary.get("success_requests") if sqlite_summary else None),
         "failed_requests": failed_requests if failed_requests is not None else (sqlite_summary.get("failed_requests") if sqlite_summary else None),
+        "success_rate": round(success_requests / total_requests, 4) if success_requests is not None and total_requests else None,
         "best_parallel": best.get("parallel"),
         "best_throughput": best.get("throughput"),
         "best_output_throughput": best.get("tokens_per_second"),
         "best_total_throughput": best.get("total_tokens_per_second"),
         "best_avg_latency_s": best.get("avg_latency_s"),
+        "best_p50_latency_s": best.get("p50_latency_s"),
+        "best_p90_latency_s": best.get("p90_latency_s"),
         "best_p95_latency_s": best.get("p95_latency_s"),
+        "best_p99_latency_s": best.get("p99_latency_s"),
+        "best_ttft_ms": best.get("ttft_ms"),
+        "best_tpot_ms": best.get("tpot_ms"),
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "total_tokens": total_tokens,
+        "estimated_cost": estimated_cost,
         "max_error_rate": round(worst_error, 4),
         "points_count": len(points),
     }
@@ -495,37 +536,169 @@ def _summary_from_points(points: list[dict[str, Any]], sqlite_summary: dict[str,
     return summary
 
 
+def _sum_numeric(points: list[dict[str, Any]], key: str) -> float | None:
+    values = [_float_or_none(point.get(key)) for point in points]
+    numbers = [value for value in values if value is not None]
+    return round(sum(numbers), 6) if numbers else None
+
+
+def _cost_summary(point: dict[str, Any], threshold_config: dict[str, Any]) -> dict[str, Any]:
+    input_price = _float_or_none(threshold_config.get("input_token_price_per_1k"))
+    output_price = _float_or_none(threshold_config.get("output_token_price_per_1k"))
+    if input_price is None and output_price is None:
+        return {"estimated_cost": None, "cost_per_1k_requests": None}
+    input_tokens = _float_or_none(point.get("input_tokens")) or 0
+    output_tokens = _float_or_none(point.get("output_tokens")) or 0
+    cost = (input_tokens / 1000 * (input_price or 0)) + (output_tokens / 1000 * (output_price or 0))
+    total_requests = _float_or_none(point.get("total_requests")) or 0
+    return {
+        "estimated_cost": round(cost, 6),
+        "cost_per_1k_requests": round(cost / total_requests * 1000, 6) if total_requests else None,
+    }
+
+
+def _with_cost(point: dict[str, Any], threshold_config: dict[str, Any]) -> dict[str, Any]:
+    enriched = dict(point)
+    enriched.update(_cost_summary(point, threshold_config))
+    return enriched
+
+
 def _build_analysis(points: list[dict[str, Any]], summary: dict[str, Any], threshold_config: dict[str, Any]) -> dict[str, Any]:
     max_error_rate = float(threshold_config.get("max_error_rate", 0.01))
     max_p95 = threshold_config.get("max_p95_latency_ms")
+    max_p99 = threshold_config.get("max_p99_latency_ms")
+    max_ttft = threshold_config.get("max_ttft_ms")
+    min_throughput = threshold_config.get("min_throughput")
+    max_cost = threshold_config.get("max_estimated_cost")
+    points = [_with_cost(point, threshold_config) for point in points]
     candidates = []
     for point in points:
         error_ok = (point.get("error_rate") or 0) <= max_error_rate
         latency_ok = max_p95 is None or point.get("p95_latency_ms") is None or point.get("p95_latency_ms") <= float(max_p95)
-        if error_ok and latency_ok:
+        p99_ok = max_p99 is None or point.get("p99_latency_ms") is None or point.get("p99_latency_ms") <= float(max_p99)
+        ttft_ok = max_ttft is None or point.get("ttft_ms") is None or point.get("ttft_ms") <= float(max_ttft)
+        throughput_ok = min_throughput is None or (point.get("throughput") or 0) >= float(min_throughput)
+        cost_ok = max_cost is None or point.get("estimated_cost") is None or point.get("estimated_cost") <= float(max_cost)
+        if error_ok and latency_ok and p99_ok and ttft_ok and throughput_ok and cost_ok:
             candidates.append(point)
     recommended = max(candidates, key=lambda item: item.get("parallel") or 0, default=None)
-    passed = bool(recommended) and (summary.get("max_error_rate") or 0) <= max_error_rate
-    if max_p95 is not None:
-        passed = passed and all(
-            item.get("p95_latency_ms") is None or item.get("p95_latency_ms") <= float(max_p95) for item in points
-        )
+    checks = _sla_checks(points, summary, threshold_config)
+    passed = bool(recommended) and all(item["passed"] for item in checks)
     best_latency = min(
         (item for item in points if item.get("avg_latency_s") is not None),
         key=lambda item: item.get("avg_latency_s") or float("inf"),
         default=None,
     )
+    capacity = _capacity_summary(points, candidates)
+    bottlenecks = _bottlenecks(points, threshold_config)
     return {
         "passed": passed,
         "recommended_parallel": recommended.get("parallel") if recommended else None,
+        "safe_parallel_range": capacity["safe_parallel_range"],
+        "max_usable_parallel": capacity["max_usable_parallel"],
+        "saturation_parallel": capacity["saturation_parallel"],
+        "bottlenecks": bottlenecks,
+        "sla_checks": checks,
         "recommendation": (
-            f"建议使用并发 {recommended.get('parallel')}，该点满足错误率和延迟阈值。"
+            f"建议使用并发 {recommended.get('parallel')}，该点满足当前 SLA，且处于可用容量区间。"
             if recommended
-            else "没有找到同时满足错误率和延迟阈值的并发点，建议降低并发或扩容后重测。"
+            else "没有找到同时满足 SLA 的并发点，建议降低并发、放宽阈值或扩容后重测。"
         ),
-        "thresholds": {"max_error_rate": max_error_rate, "max_p95_latency_ms": max_p95},
+        "thresholds": {
+            "max_error_rate": max_error_rate,
+            "max_p95_latency_ms": max_p95,
+            "max_p99_latency_ms": max_p99,
+            "max_ttft_ms": max_ttft,
+            "min_throughput": min_throughput,
+            "max_estimated_cost": max_cost,
+        },
         "best_throughput_parallel": summary.get("best_parallel"),
         "best_throughput": summary.get("best_throughput"),
         "best_latency_parallel": best_latency.get("parallel") if best_latency else None,
         "best_avg_latency_s": best_latency.get("avg_latency_s") if best_latency else None,
     }
+
+
+def _sla_checks(points: list[dict[str, Any]], summary: dict[str, Any], threshold_config: dict[str, Any]) -> list[dict[str, Any]]:
+    checks: list[dict[str, Any]] = []
+    max_error_rate = float(threshold_config.get("max_error_rate", 0.01))
+    checks.append(
+        {
+            "name": "最大错误率",
+            "metric": "max_error_rate",
+            "operator": "<=",
+            "threshold": max_error_rate,
+            "actual": summary.get("max_error_rate"),
+            "passed": (summary.get("max_error_rate") or 0) <= max_error_rate,
+        }
+    )
+    optional_checks = [
+        ("P95 延迟", "p95_latency_ms", "max_p95_latency_ms", max),
+        ("P99 延迟", "p99_latency_ms", "max_p99_latency_ms", max),
+        ("TTFT", "ttft_ms", "max_ttft_ms", max),
+        ("最低 RPS", "throughput", "min_throughput", min),
+        ("预估成本", "estimated_cost", "max_estimated_cost", max),
+    ]
+    for name, metric, threshold_key, reducer in optional_checks:
+        if threshold_key not in threshold_config or threshold_config.get(threshold_key) in {None, ""}:
+            continue
+        values = [_float_or_none(point.get(metric)) for point in points]
+        values = [value for value in values if value is not None]
+        actual = reducer(values) if values else None
+        threshold = float(threshold_config[threshold_key])
+        if metric == "throughput":
+            passed = actual is not None and actual >= threshold
+            operator = ">="
+        else:
+            passed = actual is None or actual <= threshold
+            operator = "<="
+        checks.append(
+            {
+                "name": name,
+                "metric": metric,
+                "operator": operator,
+                "threshold": threshold,
+                "actual": actual,
+                "passed": passed,
+            }
+        )
+    return checks
+
+
+def _capacity_summary(points: list[dict[str, Any]], candidates: list[dict[str, Any]]) -> dict[str, Any]:
+    safe = [point.get("parallel") for point in candidates if point.get("parallel") is not None]
+    throughputs = [_float_or_none(point.get("throughput")) for point in points]
+    saturation_parallel = None
+    previous = None
+    for point, throughput in zip(points, throughputs, strict=False):
+        if throughput is None:
+            continue
+        if previous is not None and previous > 0 and (throughput - previous) / previous < 0.05:
+            saturation_parallel = point.get("parallel")
+            break
+        previous = throughput
+    return {
+        "safe_parallel_range": [min(safe), max(safe)] if safe else None,
+        "max_usable_parallel": max(safe) if safe else None,
+        "saturation_parallel": saturation_parallel,
+    }
+
+
+def _bottlenecks(points: list[dict[str, Any]], threshold_config: dict[str, Any]) -> list[str]:
+    bottlenecks: list[str] = []
+    max_error_rate = float(threshold_config.get("max_error_rate", 0.01))
+    if any((point.get("error_rate") or 0) > max_error_rate for point in points):
+        bottlenecks.append("错误率超过阈值")
+    max_p95 = _float_or_none(threshold_config.get("max_p95_latency_ms"))
+    if max_p95 is not None and any((point.get("p95_latency_ms") or 0) > max_p95 for point in points):
+        bottlenecks.append("P95 延迟超过阈值")
+    max_ttft = _float_or_none(threshold_config.get("max_ttft_ms"))
+    if max_ttft is not None and any((point.get("ttft_ms") or 0) > max_ttft for point in points):
+        bottlenecks.append("首 token 时间偏高")
+    if len(points) >= 2:
+        ordered = sorted(points, key=lambda item: item.get("parallel") or 0)
+        first = _float_or_none(ordered[0].get("throughput"))
+        last = _float_or_none(ordered[-1].get("throughput"))
+        if first and last and last <= first * 1.1:
+            bottlenecks.append("并发升高后吞吐增长不足")
+    return bottlenecks or ["未发现明显瓶颈"]

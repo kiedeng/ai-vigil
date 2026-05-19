@@ -69,10 +69,11 @@
         <el-table-column label="启用" width="90">
           <template #default="{ row }"><el-tag :type="row.enabled ? 'success' : 'info'">{{ row.enabled ? '启用' : '停用' }}</el-tag></template>
         </el-table-column>
-        <el-table-column label="操作" width="240" fixed="right">
+        <el-table-column label="操作" width="300" fixed="right">
           <template #default="{ row }">
             <el-button size="small" :loading="runningTestId === row.id" @click.stop="runTest(row)">运行</el-button>
             <el-button size="small" @click.stop="openEdit(row)">编辑</el-button>
+            <el-button size="small" @click.stop="duplicateTest(row)">复制</el-button>
             <el-button size="small" type="danger" @click.stop="removeTest(row)">删除</el-button>
           </template>
         </el-table-column>
@@ -148,9 +149,10 @@
         </el-table-column>
         <el-table-column prop="error" label="错误" show-overflow-tooltip />
         <el-table-column prop="created_at" label="创建时间" width="190" />
-        <el-table-column label="明细" width="90" fixed="right">
+        <el-table-column label="操作" width="150" fixed="right">
           <template #default="{ row }">
             <el-button size="small" type="primary" plain @click.stop="viewRunDetail(row)">查看</el-button>
+            <el-button v-if="selected" size="small" @click.stop="runTest(selected)">重跑</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -268,6 +270,29 @@
             <div class="field-tip">推荐并发会优先选择低于该 P95 延迟的最高并发。</div>
           </el-form-item>
         </div>
+        <div class="grid-two">
+          <el-form-item label="P99 延迟阈值 ms">
+            <el-input-number v-model="maxP99LatencyMs" :min="0" :step="100" style="width: 100%" />
+            <div class="field-tip">用于更严格的尾延迟准入，0 表示不启用。</div>
+          </el-form-item>
+          <el-form-item label="TTFT 阈值 ms">
+            <el-input-number v-model="maxTtftMs" :min="0" :step="100" style="width: 100%" />
+            <div class="field-tip">流式体验的首 token 时间阈值，0 表示不启用。</div>
+          </el-form-item>
+        </div>
+        <div class="grid-two">
+          <el-form-item label="最低 RPS">
+            <el-input-number v-model="minThroughput" :min="0" :step="1" style="width: 100%" />
+            <div class="field-tip">所有可推荐并发点需要达到的最低请求吞吐，0 表示不启用。</div>
+          </el-form-item>
+          <el-form-item label="Token 单价 / 1K">
+            <div class="price-inputs">
+              <el-input-number v-model="inputTokenPrice" :min="0" :step="0.001" placeholder="输入" />
+              <el-input-number v-model="outputTokenPrice" :min="0" :step="0.001" placeholder="输出" />
+            </div>
+            <div class="field-tip">可选，用于报告预估成本；两个值都为 0 时不展示成本。</div>
+          </el-form-item>
+        </div>
         <el-form-item label="启用"><el-switch v-model="form.enabled" /></el-form-item>
         <el-collapse>
           <el-collapse-item title="高级 EvalScope 参数 JSON" name="advanced">
@@ -295,9 +320,24 @@
       </div>
     </el-dialog>
 
-    <el-dialog v-model="detailDialog" :title="activeRun ? `运行明细 #${activeRun.id}` : '运行明细'" width="1080px" @opened="renderCharts">
+    <el-dialog v-model="detailDialog" :title="activeRun ? `运行报告 #${activeRun.id}` : '运行报告'" width="1180px" @opened="renderCharts">
       <div v-if="activeRun">
-        <div class="metrics">
+        <div class="report-header">
+          <div>
+            <div class="report-title">模型压测报告</div>
+            <div class="report-subtitle">
+              Run #{{ activeRun.id }} · {{ selected?.model_name ?? '-' }} · {{ selected ? datasetLabel(selected.dataset_config) : '-' }}
+            </div>
+          </div>
+          <div class="report-actions">
+            <el-tag :type="activeRun.analysis?.passed ? 'success' : 'warning'" size="large">
+              {{ activeRun.analysis?.passed ? 'SLA 通过' : '需要关注' }}
+            </el-tag>
+            <el-button @click="exportRunJson">导出 JSON</el-button>
+          </div>
+        </div>
+
+        <div class="metrics report-metrics">
           <div class="metric">
             <div class="metric-label">状态</div>
             <div class="metric-value compact">{{ activeRun.status }}</div>
@@ -305,10 +345,12 @@
           <div class="metric">
             <div class="metric-label">推荐并发</div>
             <div class="metric-value">{{ valueOf(activeRun.analysis, 'recommended_parallel') }}</div>
+            <div class="metric-foot">安全区间 {{ formatRange(activeRun.analysis?.safe_parallel_range) }}</div>
           </div>
           <div class="metric">
             <div class="metric-label">最佳 RPS</div>
             <div class="metric-value">{{ numberTextValue(valueOf(activeRun.summary, 'best_throughput')) }}</div>
+            <div class="metric-foot">峰值并发 {{ valueOf(activeRun.summary, 'best_parallel') }}</div>
           </div>
           <div class="metric">
             <div class="metric-label">最大错误率</div>
@@ -327,8 +369,20 @@
             <div class="metric-value compact">{{ formatSeconds(valueOf(activeRun.summary, 'best_p95_latency_s')) }}</div>
           </div>
           <div class="metric">
+            <div class="metric-label">最佳 P99 延迟</div>
+            <div class="metric-value compact">{{ formatSeconds(valueOf(activeRun.summary, 'best_p99_latency_s')) }}</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">首 Token TTFT</div>
+            <div class="metric-value compact">{{ formatMs(valueOf(activeRun.summary, 'best_ttft_ms')) }}</div>
+          </div>
+          <div class="metric">
             <div class="metric-label">输出吞吐</div>
             <div class="metric-value compact">{{ numberTextValue(valueOf(activeRun.summary, 'best_output_throughput')) }} tok/s</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">预估成本</div>
+            <div class="metric-value compact">{{ moneyValue(valueOf(activeRun.summary, 'estimated_cost')) }}</div>
           </div>
         </div>
 
@@ -341,43 +395,101 @@
           :description="String(activeRun.analysis?.recommendation ?? '暂无分析结论，等待 EvalScope 输出完成。')"
         />
 
-        <div class="chart-grid">
-          <div ref="throughputChart" class="chart-box"></div>
-          <div ref="latencyChart" class="chart-box"></div>
-          <div ref="errorChart" class="chart-box"></div>
-          <div ref="tokensChart" class="chart-box"></div>
-        </div>
+        <el-tabs v-model="activeDetailTab" @tab-change="handleDetailTabChange">
+          <el-tab-pane label="总览" name="overview">
+            <div class="report-grid">
+              <div class="report-panel">
+                <div class="panel-title">容量结论</div>
+                <div class="capacity-list">
+                  <div><span>最大可用并发</span><strong>{{ valueOf(activeRun.analysis, 'max_usable_parallel') }}</strong></div>
+                  <div><span>吞吐拐点</span><strong>{{ valueOf(activeRun.analysis, 'saturation_parallel') }}</strong></div>
+                  <div><span>最佳延迟并发</span><strong>{{ valueOf(activeRun.analysis, 'best_latency_parallel') }}</strong></div>
+                  <div><span>安全并发区间</span><strong>{{ formatRange(activeRun.analysis?.safe_parallel_range) }}</strong></div>
+                </div>
+              </div>
+              <div class="report-panel">
+                <div class="panel-title">瓶颈判断</div>
+                <div class="bottleneck-tags">
+                  <el-tag v-for="item in bottlenecks" :key="item" :type="item === '未发现明显瓶颈' ? 'success' : 'warning'">{{ item }}</el-tag>
+                </div>
+              </div>
+            </div>
 
-        <el-table :data="chartPoints" stripe>
-          <el-table-column prop="parallel" label="并发" width="80" />
-          <el-table-column label="请求" width="90">
-            <template #default="{ row }">{{ row.total_requests ?? '-' }}</template>
-          </el-table-column>
-          <el-table-column label="成功率" width="100">
-            <template #default="{ row }">{{ successRate(row) }}</template>
-          </el-table-column>
-          <el-table-column label="RPS" width="100">
-            <template #default="{ row }">{{ numberTextValue(row.throughput) }}</template>
-          </el-table-column>
-          <el-table-column label="平均延迟" width="110">
-            <template #default="{ row }">{{ formatSeconds(row.avg_latency_s) }}</template>
-          </el-table-column>
-          <el-table-column label="P95" width="100">
-            <template #default="{ row }">{{ formatSeconds(row.p95_latency_s) }}</template>
-          </el-table-column>
-          <el-table-column label="P99" width="100">
-            <template #default="{ row }">{{ formatSeconds(row.p99_latency_s) }}</template>
-          </el-table-column>
-          <el-table-column label="TTFT" width="110">
-            <template #default="{ row }">{{ formatMs(row.ttft_ms) }}</template>
-          </el-table-column>
-          <el-table-column label="TPOT" width="110">
-            <template #default="{ row }">{{ formatMs(row.tpot_ms) }}</template>
-          </el-table-column>
-          <el-table-column label="输出 tok/s" width="120">
-            <template #default="{ row }">{{ numberTextValue(row.tokens_per_second) }}</template>
-          </el-table-column>
-        </el-table>
+            <el-table :data="slaChecks" stripe>
+              <el-table-column label="SLA 项" min-width="150">
+                <template #default="{ row }">{{ row.name }}</template>
+              </el-table-column>
+              <el-table-column label="结果" width="100">
+                <template #default="{ row }"><el-tag :type="row.passed ? 'success' : 'danger'">{{ row.passed ? '通过' : '失败' }}</el-tag></template>
+              </el-table-column>
+              <el-table-column label="实际值" width="140">
+                <template #default="{ row }">{{ formatSlaValue(row.metric, row.actual) }}</template>
+              </el-table-column>
+              <el-table-column label="阈值" width="140">
+                <template #default="{ row }">{{ row.operator }} {{ formatSlaValue(row.metric, row.threshold) }}</template>
+              </el-table-column>
+              <el-table-column prop="metric" label="指标键" min-width="160" />
+            </el-table>
+          </el-tab-pane>
+
+          <el-tab-pane label="曲线" name="charts">
+            <div class="chart-grid">
+              <div ref="throughputChart" class="chart-box"></div>
+              <div ref="latencyChart" class="chart-box"></div>
+              <div ref="errorChart" class="chart-box"></div>
+              <div ref="tokensChart" class="chart-box"></div>
+            </div>
+          </el-tab-pane>
+
+          <el-tab-pane label="并发明细" name="points">
+            <el-table :data="chartPoints" stripe>
+              <el-table-column prop="parallel" label="并发" width="80" />
+              <el-table-column label="请求" width="90">
+                <template #default="{ row }">{{ row.total_requests ?? '-' }}</template>
+              </el-table-column>
+              <el-table-column label="成功率" width="100">
+                <template #default="{ row }">{{ successRate(row) }}</template>
+              </el-table-column>
+              <el-table-column label="RPS" width="100">
+                <template #default="{ row }">{{ numberTextValue(row.throughput) }}</template>
+              </el-table-column>
+              <el-table-column label="平均延迟" width="110">
+                <template #default="{ row }">{{ formatSeconds(row.avg_latency_s) }}</template>
+              </el-table-column>
+              <el-table-column label="P50" width="100">
+                <template #default="{ row }">{{ formatSeconds(row.p50_latency_s) }}</template>
+              </el-table-column>
+              <el-table-column label="P90" width="100">
+                <template #default="{ row }">{{ formatSeconds(row.p90_latency_s) }}</template>
+              </el-table-column>
+              <el-table-column label="P95" width="100">
+                <template #default="{ row }">{{ formatSeconds(row.p95_latency_s) }}</template>
+              </el-table-column>
+              <el-table-column label="P99" width="100">
+                <template #default="{ row }">{{ formatSeconds(row.p99_latency_s) }}</template>
+              </el-table-column>
+              <el-table-column label="TTFT" width="110">
+                <template #default="{ row }">{{ formatMs(row.ttft_ms) }}</template>
+              </el-table-column>
+              <el-table-column label="TPOT" width="110">
+                <template #default="{ row }">{{ formatMs(row.tpot_ms) }}</template>
+              </el-table-column>
+              <el-table-column label="输出 tok/s" width="120">
+                <template #default="{ row }">{{ numberTextValue(row.tokens_per_second) }}</template>
+              </el-table-column>
+              <el-table-column label="总 tok/s" width="110">
+                <template #default="{ row }">{{ numberTextValue(row.total_tokens_per_second) }}</template>
+              </el-table-column>
+              <el-table-column label="成本" width="110">
+                <template #default="{ row }">{{ moneyValue(row.estimated_cost) }}</template>
+              </el-table-column>
+            </el-table>
+          </el-tab-pane>
+
+          <el-tab-pane label="原始数据" name="raw">
+            <pre class="raw-json">{{ reportJson }}</pre>
+          </el-tab-pane>
+        </el-tabs>
       </div>
       <template #footer>
         <el-button @click="detailDialog = false">关闭</el-button>
@@ -432,6 +544,7 @@ const previewingDataset = ref<ModelPerformanceDataset | null>(null);
 const detailDialog = ref(false);
 const logDialog = ref(false);
 const logBox = ref<HTMLElement | null>(null);
+const activeDetailTab = ref('overview');
 
 const dialogVisible = ref(false);
 const editing = ref<ModelPerformanceTest | null>(null);
@@ -445,6 +558,11 @@ const logEveryNQuery = ref(5);
 const streamEnabled = ref(true);
 const maxErrorRatePercent = ref(1);
 const maxP95LatencyMs = ref(10000);
+const maxP99LatencyMs = ref(20000);
+const maxTtftMs = ref(3000);
+const minThroughput = ref(0);
+const inputTokenPrice = ref(0);
+const outputTokenPrice = ref(0);
 const extraArgsText = ref('{}');
 const logText = ref('');
 const logOffset = ref(0);
@@ -587,6 +705,15 @@ function openEdit(row: ModelPerformanceTest) {
   dialogVisible.value = true;
 }
 
+function duplicateTest(row: ModelPerformanceTest) {
+  editing.value = null;
+  Object.assign(form, JSON.parse(JSON.stringify(row)));
+  delete form.id;
+  form.name = `${row.name} 副本`;
+  syncFieldsFromConfig(row);
+  dialogVisible.value = true;
+}
+
 function syncFieldsFromConfig(row: ModelPerformanceTest) {
   const load = row.load_config ?? {};
   const threshold = row.threshold_config ?? {};
@@ -598,15 +725,20 @@ function syncFieldsFromConfig(row: ModelPerformanceTest) {
   streamEnabled.value = load.stream !== false;
   maxErrorRatePercent.value = Number(threshold.max_error_rate ?? 0.01) * 100;
   maxP95LatencyMs.value = Number(threshold.max_p95_latency_ms ?? 10000);
+  maxP99LatencyMs.value = Number(threshold.max_p99_latency_ms ?? 0);
+  maxTtftMs.value = Number(threshold.max_ttft_ms ?? 0);
+  minThroughput.value = Number(threshold.min_throughput ?? 0);
+  inputTokenPrice.value = Number(threshold.input_token_price_per_1k ?? 0);
+  outputTokenPrice.value = Number(threshold.output_token_price_per_1k ?? 0);
   selectedDatasetName.value = String(row.dataset_config?.dataset_name || matchDatasetName(row.dataset_config) || datasets.value[0]?.name || '');
   extraArgsText.value = JSON.stringify(row.extra_args ?? {}, null, 2);
 }
 
 function applyTemplate(type: 'smoke' | 'normal' | 'capacity') {
   const templates = {
-    smoke: { parallel: '1,2', number: '10', timeout: 60, tokens: 80, p95: 8000 },
-    normal: { parallel: '1,2,4,8', number: '50', timeout: 120, tokens: 128, p95: 10000 },
-    capacity: { parallel: '1,2,4,8,16,32', number: '100', timeout: 180, tokens: 128, p95: 15000 }
+    smoke: { parallel: '1,2', number: '10', timeout: 60, tokens: 80, p95: 8000, p99: 12000, ttft: 3000 },
+    normal: { parallel: '1,2,4,8', number: '50', timeout: 120, tokens: 128, p95: 10000, p99: 20000, ttft: 3000 },
+    capacity: { parallel: '1,2,4,8,16,32', number: '100', timeout: 180, tokens: 128, p95: 15000, p99: 30000, ttft: 5000 }
   };
   const item = templates[type];
   parallelText.value = item.parallel;
@@ -614,6 +746,9 @@ function applyTemplate(type: 'smoke' | 'normal' | 'capacity') {
   readTimeout.value = item.timeout;
   maxTokens.value = item.tokens;
   maxP95LatencyMs.value = item.p95;
+  maxP99LatencyMs.value = item.p99;
+  maxTtftMs.value = item.ttft;
+  minThroughput.value = 0;
   logEveryNQuery.value = 5;
   streamEnabled.value = true;
   maxErrorRatePercent.value = 1;
@@ -642,7 +777,12 @@ async function saveTest() {
     },
     threshold_config: {
       max_error_rate: maxErrorRatePercent.value / 100,
-      max_p95_latency_ms: maxP95LatencyMs.value
+      max_p95_latency_ms: maxP95LatencyMs.value,
+      ...(maxP99LatencyMs.value > 0 ? { max_p99_latency_ms: maxP99LatencyMs.value } : {}),
+      ...(maxTtftMs.value > 0 ? { max_ttft_ms: maxTtftMs.value } : {}),
+      ...(minThroughput.value > 0 ? { min_throughput: minThroughput.value } : {}),
+      ...(inputTokenPrice.value > 0 ? { input_token_price_per_1k: inputTokenPrice.value } : {}),
+      ...(outputTokenPrice.value > 0 ? { output_token_price_per_1k: outputTokenPrice.value } : {})
     },
     extra_args: parseJsonObject(extraArgsText.value)
   };
@@ -743,10 +883,15 @@ function renderCharts() {
     buildChart(throughputChart.value, '吞吐量', labels, [{ name: 'QPS', data: points.map((item) => numberValue(item.throughput)) }]),
     buildChart(latencyChart.value, '延迟分位 秒', labels, [
       { name: '平均', data: points.map((item) => numberValue(item.avg_latency_s)) },
+      { name: 'P50', data: points.map((item) => numberValue(item.p50_latency_s)) },
+      { name: 'P90', data: points.map((item) => numberValue(item.p90_latency_s)) },
       { name: 'P95', data: points.map((item) => numberValue(item.p95_latency_s)) },
       { name: 'P99', data: points.map((item) => numberValue(item.p99_latency_s)) }
     ]),
-    buildChart(errorChart.value, '错误率', labels, [{ name: '错误率 %', data: points.map((item) => numberValue(item.error_rate) * 100) }]),
+    buildChart(errorChart.value, '成功率 / 错误率', labels, [
+      { name: '成功率 %', data: points.map((item) => numberValue(item.success_rate) * 100) },
+      { name: '错误率 %', data: points.map((item) => numberValue(item.error_rate) * 100) }
+    ]),
     buildChart(tokensChart.value, 'Token 吞吐', labels, [
       { name: '输出 tok/s', data: points.map((item) => numberValue(item.tokens_per_second)) },
       { name: '总 tok/s', data: points.map((item) => numberValue(item.total_tokens_per_second)) }
@@ -769,6 +914,11 @@ function buildChart(el: HTMLElement | null, title: string, labels: string[], ser
   return chart;
 }
 
+async function handleDetailTabChange() {
+  await nextTick();
+  window.requestAnimationFrame(() => renderCharts());
+}
+
 function disposeCharts() {
   charts.forEach((chart) => chart.dispose());
   charts = [];
@@ -777,6 +927,7 @@ function disposeCharts() {
 async function openDetailDialog() {
   if (!activeRun.value) return;
   activeRun.value = await api.modelPerformanceRun(activeRun.value.id);
+  activeDetailTab.value = 'overview';
   detailDialog.value = true;
   await nextTick();
   renderCharts();
@@ -863,6 +1014,19 @@ const runStatusDescription = computed(() => {
 });
 
 const chartPoints = computed(() => ((activeRun.value?.chart_data?.points as Array<Record<string, unknown>> | undefined) ?? []));
+const slaChecks = computed(() => ((activeRun.value?.analysis?.sla_checks as Array<Record<string, unknown>> | undefined) ?? []));
+const bottlenecks = computed(() => ((activeRun.value?.analysis?.bottlenecks as string[] | undefined) ?? []));
+const reportJson = computed(() =>
+  JSON.stringify(
+    {
+      run: activeRun.value,
+      test: selected.value,
+      generated_at: new Date().toISOString()
+    },
+    null,
+    2
+  )
+);
 
 function formatDuration(ms: unknown) {
   const value = Number(ms);
@@ -895,11 +1059,36 @@ function numberTextValue(value: unknown) {
   return Number.isFinite(number) ? number.toFixed(2) : '-';
 }
 
+function moneyValue(value: unknown) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return '-';
+  return number === 0 ? '0.00' : number.toFixed(4);
+}
+
+function formatRange(value: unknown) {
+  if (!Array.isArray(value) || value.length < 2) return '-';
+  return `${value[0]} - ${value[1]}`;
+}
+
+function formatSlaValue(metric: unknown, value: unknown) {
+  if (value === undefined || value === null || value === '') return '-';
+  const key = String(metric);
+  if (key.includes('error_rate') || key.includes('success_rate')) return percentValue(value);
+  if (key.includes('latency') || key === 'ttft_ms') return formatMs(value);
+  if (key.includes('cost')) return moneyValue(value);
+  return numberTextValue(value);
+}
+
 function successRate(row: Record<string, unknown>) {
   const total = Number(row.total_requests);
   const success = Number(row.success_requests);
   if (!Number.isFinite(total) || total <= 0 || !Number.isFinite(success)) return '-';
   return `${((success / total) * 100).toFixed(1)}%`;
+}
+
+async function exportRunJson() {
+  await navigator.clipboard.writeText(reportJson.value);
+  ElMessage.success('报告 JSON 已复制到剪贴板');
 }
 
 onMounted(load);
@@ -965,6 +1154,86 @@ onBeforeUnmount(() => {
   word-break: break-word;
 }
 
+.metric-foot {
+  color: #64748b;
+  font-size: 12px;
+  margin-top: 8px;
+}
+
+.report-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+  margin-bottom: 16px;
+}
+
+.report-title {
+  font-size: 20px;
+  font-weight: 800;
+}
+
+.report-subtitle {
+  color: #64748b;
+  margin-top: 6px;
+}
+
+.report-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.report-metrics {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.report-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.report-panel {
+  border: 1px solid #d9e4ef;
+  border-radius: 8px;
+  padding: 16px;
+  background: #f8fbfd;
+}
+
+.panel-title {
+  font-weight: 700;
+  margin-bottom: 12px;
+}
+
+.capacity-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.capacity-list div {
+  display: grid;
+  gap: 4px;
+}
+
+.capacity-list span {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.capacity-list strong {
+  font-size: 18px;
+}
+
+.bottleneck-tags {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .chart-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -977,6 +1246,40 @@ onBeforeUnmount(() => {
   border: 1px solid #d9e4ef;
   border-radius: 8px;
   background: #ffffff;
+}
+
+.raw-json,
+.run-log {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.raw-json {
+  max-height: 520px;
+  overflow: auto;
+  padding: 14px;
+  border: 1px solid #d9e4ef;
+  border-radius: 8px;
+  background: #0f172a;
+  color: #e2e8f0;
+  font-size: 12px;
+}
+
+.price-inputs {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+}
+
+@media (max-width: 1100px) {
+  .report-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .report-grid,
+  .chart-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .run-log {
