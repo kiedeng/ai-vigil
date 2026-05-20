@@ -1,172 +1,281 @@
 <template>
-  <div>
-    <section class="section">
-      <div class="toolbar">
-        <strong>模型性能测试</strong>
-        <el-button type="primary" @click="openCreate">新增测试</el-button>
-      </div>
-      <div class="page-hint">选择测试配置后点击运行，运行监控会显示启动状态、日志、图表和分析结果。</div>
-    </section>
+  <div class="performance-workbench">
+    <el-tabs v-model="activeMainTab" class="performance-tabs">
+      <el-tab-pane label="测试运行" name="runs">
+        <section class="section workbench-hero">
+          <div>
+            <strong>模型性能测试</strong>
+            <div class="page-hint">查看正在运行的压测实例，具体运行情况和历史记录点击实例后在弹窗中查看。</div>
+          </div>
+          <div class="dataset-actions">
+            <el-button @click="load">刷新</el-button>
+            <el-button type="primary" @click="openCreate">新增测试</el-button>
+          </div>
+        </section>
 
-    <section class="section">
-      <div class="toolbar">
-        <strong>性能测试数据集</strong>
-        <div class="dataset-actions">
-          <el-input v-model="datasetUpload.name" placeholder="数据集名称" style="width: 180px" />
-          <el-select v-model="datasetUpload.dataset" style="width: 150px">
-            <el-option label="openqa JSONL" value="openqa" />
-            <el-option label="line_by_line TXT" value="line_by_line" />
-          </el-select>
-          <el-input v-model="datasetUpload.description" placeholder="描述" style="width: 220px" />
-          <input ref="datasetFileInput" type="file" accept=".jsonl,.txt" @change="onDatasetFileChange" />
-          <el-button type="primary" :disabled="!datasetUpload.file || !datasetUpload.name" @click="uploadDataset">
-            上传数据集
-          </el-button>
-        </div>
-      </div>
-      <el-table :data="datasets" stripe>
-        <el-table-column prop="name" label="名称" min-width="170" />
-        <el-table-column prop="dataset" label="格式" width="130" />
-        <el-table-column label="来源" width="100">
-          <template #default="{ row }"><el-tag :type="row.source === 'builtin' ? 'success' : 'info'">{{ row.source === 'builtin' ? '内置' : '上传' }}</el-tag></template>
-        </el-table-column>
-        <el-table-column prop="item_count" label="条数" width="90" />
-        <el-table-column prop="description" label="说明" min-width="260" show-overflow-tooltip />
-        <el-table-column prop="dataset_path" label="路径" min-width="240" show-overflow-tooltip />
-        <el-table-column label="操作" width="100">
-          <template #default="{ row }"><el-button size="small" @click="previewDataset(row)">预览</el-button></template>
-        </el-table-column>
-      </el-table>
-    </section>
+        <section class="section run-overview-section">
+          <div class="section-header">
+            <strong>正在运行的实例</strong>
+            <span>{{ runningOverview.length }} 个运行中</span>
+          </div>
+          <el-empty v-if="runningOverview.length === 0" description="当前没有运行中的性能测试" />
+          <div v-else class="running-card-grid">
+            <button v-for="item in runningOverview" :key="item.run.id" class="running-card" type="button" @click="openRunInstance(item.test, item.run)">
+              <div class="running-card-head">
+                <strong>{{ item.test.name }}</strong>
+                <el-tag :type="statusType(item.run.status)">{{ item.run.status }}</el-tag>
+              </div>
+              <div class="running-card-meta">{{ item.test.model_name }} · {{ instanceName(item.test.new_api_instance_id) }}</div>
+              <div class="running-card-stats">
+                <span>Run #{{ item.run.id }}</span>
+                <span>{{ formatDuration(item.run.duration_ms) }}</span>
+                <span>并发 {{ formatList(item.test.load_config.parallel) }}</span>
+              </div>
+            </button>
+          </div>
+        </section>
 
-    <section class="section">
-      <div class="toolbar">
-        <strong>测试配置</strong>
-      </div>
-      <div class="filter-bar">
-        <el-input v-model="filters.search" clearable placeholder="搜索名称或模型" style="width: 260px" @keyup.enter="loadTests" />
-        <el-select v-model="filters.instance_id" clearable placeholder="全部实例" style="width: 180px" @change="loadTests">
-          <el-option v-for="item in instances" :key="item.id" :label="item.name" :value="item.id" />
-        </el-select>
-        <el-button @click="loadTests">查询</el-button>
-      </div>
-      <el-table :data="tests" stripe @row-click="selectTest">
-        <el-table-column prop="id" label="ID" width="80" />
-        <el-table-column prop="name" label="名称" min-width="150" />
-        <el-table-column label="实例" width="140">
-          <template #default="{ row }">{{ instanceName(row.new_api_instance_id) }}</template>
-        </el-table-column>
-        <el-table-column prop="model_name" label="模型" min-width="170" />
-        <el-table-column label="数据集" min-width="160">
-          <template #default="{ row }">{{ datasetLabel(row.dataset_config) }}</template>
-        </el-table-column>
-        <el-table-column label="并发阶梯" width="140">
-          <template #default="{ row }">{{ formatList(row.load_config.parallel) }}</template>
-        </el-table-column>
-        <el-table-column label="请求数" width="100">
-          <template #default="{ row }">{{ formatList(row.load_config.number) }}</template>
-        </el-table-column>
-        <el-table-column label="启用" width="90">
-          <template #default="{ row }"><el-tag :type="row.enabled ? 'success' : 'info'">{{ row.enabled ? '启用' : '停用' }}</el-tag></template>
-        </el-table-column>
-        <el-table-column label="操作" width="300" fixed="right">
-          <template #default="{ row }">
-            <el-button size="small" :loading="runningTestId === row.id" @click.stop="runTest(row)">运行</el-button>
-            <el-button size="small" @click.stop="openEdit(row)">编辑</el-button>
-            <el-button size="small" @click.stop="duplicateTest(row)">复制</el-button>
-            <el-button size="small" type="danger" @click.stop="removeTest(row)">删除</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
-      <el-pagination
-        class="pager"
-        layout="total, sizes, prev, pager, next"
-        :total="pagination.total"
-        v-model:current-page="pagination.page"
-        v-model:page-size="pagination.page_size"
-        :page-sizes="[20, 50, 100]"
-        @current-change="loadTests"
-        @size-change="loadTests"
-      />
-    </section>
+        <section class="section test-list-panel">
+            <div class="section-header">
+              <strong>测试配置</strong>
+              <span>{{ pagination.total }} 个配置</span>
+            </div>
+            <div class="filter-bar">
+              <el-input v-model="filters.search" clearable placeholder="搜索名称或模型" style="width: 240px" @keyup.enter="loadTests" />
+              <el-select v-model="filters.instance_id" clearable placeholder="全部实例" style="width: 170px" @change="loadTests">
+                <el-option v-for="item in instances" :key="item.id" :label="item.name" :value="item.id" />
+              </el-select>
+              <el-button @click="loadTests">查询</el-button>
+            </div>
+            <el-table :data="tests" stripe highlight-current-row @row-click="handleTestRowClick">
+              <el-table-column prop="name" label="名称" min-width="150" show-overflow-tooltip />
+              <el-table-column label="实例" width="130">
+                <template #default="{ row }">{{ instanceName(row.new_api_instance_id) }}</template>
+              </el-table-column>
+              <el-table-column prop="model_name" label="模型" min-width="150" show-overflow-tooltip />
+              <el-table-column label="数据集" min-width="150" show-overflow-tooltip>
+                <template #default="{ row }">{{ datasetLabel(row.dataset_config) }}</template>
+              </el-table-column>
+              <el-table-column label="并发" width="120">
+                <template #default="{ row }">{{ formatList(row.load_config.parallel) }}</template>
+              </el-table-column>
+              <el-table-column label="请求数" width="100">
+                <template #default="{ row }">{{ formatList(row.load_config.number) }}</template>
+              </el-table-column>
+              <el-table-column label="启用" width="82">
+                <template #default="{ row }"><el-tag :type="row.enabled ? 'success' : 'info'">{{ row.enabled ? '启用' : '停用' }}</el-tag></template>
+              </el-table-column>
+              <el-table-column label="操作" width="280" fixed="right">
+                <template #default="{ row }">
+                  <el-button size="small" :loading="runningTestId === row.id" @click.stop="runTest(row)">运行</el-button>
+                  <el-button size="small" @click.stop="openEdit(row)">编辑</el-button>
+                  <el-button size="small" @click.stop="duplicateTest(row)">复制</el-button>
+                  <el-button size="small" type="danger" @click.stop="removeTest(row)">删除</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+            <el-pagination
+              class="pager"
+              layout="total, sizes, prev, pager, next"
+              :total="pagination.total"
+              v-model:current-page="pagination.page"
+              v-model:page-size="pagination.page_size"
+              :page-sizes="[20, 50, 100]"
+              @current-change="loadTests"
+              @size-change="loadTests"
+            />
+        </section>
+      </el-tab-pane>
 
-    <section class="section run-monitor">
-      <div class="toolbar">
-        <strong>运行监控</strong>
-        <div class="dataset-actions">
-          <el-button :disabled="!selected" @click="loadRuns">刷新历史</el-button>
-          <el-button :disabled="!activeRun" @click="refreshActiveRun">刷新当前运行</el-button>
-          <el-button :disabled="!activeRun" type="primary" plain @click="openLogDialog">查看日志</el-button>
-          <el-button :disabled="!activeRun" @click="openDetailDialog">查看明细</el-button>
+      <el-tab-pane label="模型对比" name="comparisons">
+        <section class="section">
+          <div class="toolbar">
+            <div>
+              <strong>模型对比任务</strong>
+              <div class="page-hint">使用同一套数据集和压测参数运行 2-5 个模型，并生成规则和 AI 对比结论。</div>
+            </div>
+            <div class="dataset-actions">
+              <el-button type="primary" @click="openComparisonCreate">新增对比</el-button>
+              <el-button @click="loadComparisons">刷新</el-button>
+            </div>
+          </div>
+          <el-table :data="comparisons" stripe @row-click="selectComparison">
+            <el-table-column prop="name" label="名称" min-width="180" show-overflow-tooltip />
+            <el-table-column label="状态" width="120">
+              <template #default="{ row }"><el-tag :type="statusType(row.status)">{{ row.status }}</el-tag></template>
+            </el-table-column>
+            <el-table-column label="模型" min-width="240" show-overflow-tooltip>
+              <template #default="{ row }">{{ comparisonModelNames(row) }}</template>
+            </el-table-column>
+            <el-table-column label="胜出模型" width="150">
+              <template #default="{ row }">{{ valueOf(row.summary, 'winner_model') }}</template>
+            </el-table-column>
+            <el-table-column label="耗时" width="120">
+              <template #default="{ row }">{{ formatDuration(row.duration_ms) }}</template>
+            </el-table-column>
+            <el-table-column prop="error" label="错误" show-overflow-tooltip />
+            <el-table-column label="操作" width="340" fixed="right">
+              <template #default="{ row }">
+                <el-button size="small" :loading="runningComparisonId === row.id" @click.stop="runComparison(row)">运行</el-button>
+                <el-button size="small" @click.stop="openComparisonEdit(row)">编辑</el-button>
+                <el-button size="small" type="primary" plain @click.stop="viewComparison(row)">报告</el-button>
+                <el-button size="small" plain @click.stop="openComparisonLog(row)">日志</el-button>
+                <el-button v-if="isRunningStatus(row.status)" size="small" type="danger" plain @click.stop="cancelComparison(row)">终止</el-button>
+                <el-button size="small" type="danger" @click.stop="removeComparison(row)">删除</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </section>
+      </el-tab-pane>
+
+      <el-tab-pane label="数据集" name="datasets">
+        <section class="section">
+          <div class="toolbar">
+            <div>
+              <strong>性能测试数据集</strong>
+              <div class="page-hint">内置数据集用于冒烟验证，上传数据集用于贴近真实业务容量评估。</div>
+            </div>
+            <div class="dataset-actions upload-actions">
+              <el-input v-model="datasetUpload.name" placeholder="数据集名称" style="width: 180px" />
+              <el-select v-model="datasetUpload.dataset" style="width: 150px">
+                <el-option label="openqa JSONL" value="openqa" />
+                <el-option label="line_by_line TXT" value="line_by_line" />
+              </el-select>
+              <el-input v-model="datasetUpload.description" placeholder="描述" style="width: 220px" />
+              <input ref="datasetFileInput" type="file" accept=".jsonl,.txt" @change="onDatasetFileChange" />
+              <el-button type="primary" :disabled="!datasetUpload.file || !datasetUpload.name" @click="uploadDataset">
+                上传数据集
+              </el-button>
+            </div>
+          </div>
+          <el-table :data="datasets" stripe>
+            <el-table-column prop="name" label="名称" min-width="190" show-overflow-tooltip />
+            <el-table-column prop="dataset" label="格式" width="140" />
+            <el-table-column label="来源" width="100">
+              <template #default="{ row }"><el-tag :type="row.source === 'builtin' ? 'success' : 'info'">{{ row.source === 'builtin' ? '内置' : '上传' }}</el-tag></template>
+            </el-table-column>
+            <el-table-column prop="item_count" label="条数" width="90" />
+            <el-table-column prop="description" label="说明" min-width="280" show-overflow-tooltip />
+            <el-table-column label="操作" width="100">
+              <template #default="{ row }"><el-button size="small" @click="previewDataset(row)">预览</el-button></template>
+            </el-table-column>
+          </el-table>
+        </section>
+      </el-tab-pane>
+    </el-tabs>
+
+    <el-dialog v-model="runInstanceDialog" :title="selected ? `运行实例：${selected.name}` : '运行实例'" width="1080px">
+      <div v-if="selected" class="run-instance-dialog">
+        <div class="selected-test">
+          <div>
+            <div class="selected-title">{{ selected.model_name }}</div>
+            <div class="selected-meta">{{ instanceName(selected.new_api_instance_id) }} · {{ datasetLabel(selected.dataset_config) }}</div>
+          </div>
+          <el-button size="small" type="primary" :loading="runningTestId === selected.id" @click="runTest(selected)">运行</el-button>
         </div>
-      </div>
-      <el-alert
-        v-if="!activeRun"
-        class="form-help"
-        type="info"
-        :closable="false"
-        show-icon
-        title="还没有运行中的任务"
-        description="点击测试配置表格里的“运行”后，这里会立即显示 Run ID、启动状态、轮询进度、日志和结果图表。"
-      />
-      <div v-else>
-        <div class="run-status-line">
-          <el-tag :type="statusType(activeRun.status)" size="large">{{ activeRun.status }}</el-tag>
-          <span>Run ID：#{{ activeRun.id }}</span>
-          <span>测试 ID：#{{ activeRun.test_id }}</span>
-          <span>耗时：{{ formatDuration(activeRun.duration_ms) }}</span>
-          <span v-if="activeRun.started_at">开始：{{ activeRun.started_at }}</span>
-        </div>
+
         <el-alert
+          v-if="!activeRun"
           class="form-help"
-          :type="['pending', 'running'].includes(activeRun.status) ? 'info' : activeRun.status === 'success' ? 'success' : 'error'"
+          type="info"
           :closable="false"
           show-icon
-          title="当前启动情况"
-          :description="runStatusDescription"
+          title="暂无当前运行"
+          description="运行测试后这里会显示状态、关键指标、日志和报告入口。"
+        />
+        <template v-else>
+          <div class="run-status-line">
+            <el-tag :type="statusType(activeRun.status)" size="large">{{ activeRun.status }}</el-tag>
+            <span>Run #{{ activeRun.id }}</span>
+            <span>耗时 {{ formatDuration(activeRun.duration_ms) }}</span>
+          </div>
+          <div class="compact-metrics">
+            <div class="compact-metric">
+              <span>推荐并发</span>
+              <strong>{{ valueOf(activeRun.analysis, 'recommended_parallel') }}</strong>
+            </div>
+            <div class="compact-metric">
+              <span>最佳 RPS</span>
+              <strong>{{ numberTextValue(valueOf(activeRun.summary, 'best_throughput')) }}</strong>
+            </div>
+            <div class="compact-metric">
+              <span>最大错误率</span>
+              <strong>{{ percentValue(valueOf(activeRun.summary, 'max_error_rate')) }}</strong>
+            </div>
+          </div>
+          <el-alert
+            class="form-help"
+            :type="['pending', 'running'].includes(activeRun.status) ? 'info' : activeRun.status === 'success' ? 'success' : activeRun.status === 'cancelled' ? 'warning' : 'error'"
+            :closable="false"
+            show-icon
+            title="当前启动情况"
+            :description="runStatusDescription"
+          />
+        </template>
+
+        <div class="run-actions">
+          <el-button @click="loadRuns">刷新历史</el-button>
+          <el-button :disabled="!activeRun" @click="refreshActiveRun">刷新当前</el-button>
+          <el-button
+            :disabled="!activeRun || !isRunningStatus(activeRun.status)"
+            :loading="cancelingRunId === activeRun?.id"
+            type="danger"
+            plain
+            @click="activeRun && cancelRun(activeRun)"
+          >
+            终止
+          </el-button>
+          <el-button :disabled="!activeRun" type="primary" plain @click="openDetailDialog">报告</el-button>
+          <el-button :disabled="!activeRun" plain @click="openLogDialog">日志</el-button>
+        </div>
+
+        <div class="history-header">
+          <strong>运行历史</strong>
+          <span>{{ runPagination.total }} 条</span>
+        </div>
+        <el-table :data="runs" stripe size="small" max-height="360" @row-click="selectRun">
+          <el-table-column prop="id" label="Run" width="76" />
+          <el-table-column label="状态" width="104">
+            <template #default="{ row }"><el-tag :type="statusType(row.status)">{{ row.status }}</el-tag></template>
+          </el-table-column>
+          <el-table-column label="耗时" width="104">
+            <template #default="{ row }">{{ formatDuration(row.duration_ms) }}</template>
+          </el-table-column>
+          <el-table-column label="推荐并发" width="104">
+            <template #default="{ row }">{{ valueOf(row.analysis, 'recommended_parallel') }}</template>
+          </el-table-column>
+          <el-table-column label="最佳 RPS" width="100">
+            <template #default="{ row }">{{ numberTextValue(valueOf(row.summary, 'best_throughput')) }}</template>
+          </el-table-column>
+          <el-table-column prop="error" label="错误" min-width="140" show-overflow-tooltip />
+          <el-table-column label="操作" width="170" fixed="right">
+            <template #default="{ row }">
+              <el-button size="small" type="primary" plain @click.stop="viewRunDetail(row)">查看</el-button>
+              <el-button
+                v-if="isRunningStatus(row.status)"
+                size="small"
+                type="danger"
+                plain
+                :loading="cancelingRunId === row.id"
+                @click.stop="cancelRun(row)"
+              >
+                终止
+              </el-button>
+              <el-button size="small" @click.stop="runTest(selected)">重跑</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+        <el-pagination
+          class="pager"
+          layout="total, prev, pager, next"
+          :total="runPagination.total"
+          v-model:current-page="runPagination.page"
+          v-model:page-size="runPagination.page_size"
+          @current-change="loadRuns"
+          @size-change="loadRuns"
         />
       </div>
-    </section>
-
-    <section v-if="selected" class="section">
-      <div class="toolbar">
-        <strong>运行历史：{{ selected.name }}</strong>
-        <el-button @click="loadRuns">刷新</el-button>
-      </div>
-      <el-table :data="runs" stripe @row-click="selectRun">
-        <el-table-column prop="id" label="Run ID" width="90" />
-        <el-table-column label="状态" width="110">
-          <template #default="{ row }"><el-tag :type="statusType(row.status)">{{ row.status }}</el-tag></template>
-        </el-table-column>
-        <el-table-column label="耗时" width="120">
-          <template #default="{ row }">{{ formatDuration(row.duration_ms) }}</template>
-        </el-table-column>
-        <el-table-column label="推荐并发" width="120">
-          <template #default="{ row }">{{ valueOf(row.analysis, 'recommended_parallel') }}</template>
-        </el-table-column>
-        <el-table-column label="最佳吞吐" width="120">
-          <template #default="{ row }">{{ valueOf(row.summary, 'best_throughput') }}</template>
-        </el-table-column>
-        <el-table-column prop="error" label="错误" show-overflow-tooltip />
-        <el-table-column prop="created_at" label="创建时间" width="190" />
-        <el-table-column label="操作" width="150" fixed="right">
-          <template #default="{ row }">
-            <el-button size="small" type="primary" plain @click.stop="viewRunDetail(row)">查看</el-button>
-            <el-button v-if="selected" size="small" @click.stop="runTest(selected)">重跑</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
-      <el-pagination
-        class="pager"
-        layout="total, sizes, prev, pager, next"
-        :total="runPagination.total"
-        v-model:current-page="runPagination.page"
-        v-model:page-size="runPagination.page_size"
-        :page-sizes="[20, 50, 100]"
-        @current-change="loadRuns"
-        @size-change="loadRuns"
-      />
-    </section>
+    </el-dialog>
 
     <el-dialog v-model="dialogVisible" :title="editing?.id ? '编辑模型性能测试' : '新增模型性能测试'" width="900px">
       <el-form label-position="top">
@@ -227,13 +336,13 @@
             <template #label>
               <span class="label-with-tip">
                 每档请求数
-                <el-tooltip placement="top" content="单个数字会用于所有并发档；多个数字会按并发顺序匹配。请求数越大结果越稳定，但运行时间和成本越高。">
+                <el-tooltip placement="top" content="默认按并发阶梯生成，例如 1,2,4,8 会生成 5,10,20,40；单个数字仍会用于所有并发档。">
                   <span class="tip-icon">?</span>
                 </el-tooltip>
               </span>
             </template>
-            <el-input v-model="numberText" placeholder="50 或 20,50,100" />
-            <div class="field-tip">单个数字会用于所有并发档；多个数字会按并发顺序匹配。</div>
+            <el-input v-model="numberText" placeholder="5,10,20,40" />
+            <div class="field-tip">默认按并发数的 5 倍生成并封顶 50；多个数字会按并发顺序匹配。</div>
           </el-form-item>
         </div>
         <div class="grid-two">
@@ -305,6 +414,138 @@
         <el-button @click="dialogVisible = false">取消</el-button>
         <el-button type="primary" @click="saveTest">保存</el-button>
       </template>
+    </el-dialog>
+
+    <el-dialog v-model="comparisonDialog" :title="comparisonEditing?.id ? '编辑模型对比任务' : '新增模型对比任务'" width="980px">
+      <el-form label-position="top">
+        <div class="template-row">
+          <span>配置模板</span>
+          <el-button size="small" @click="applyComparisonTemplate('smoke')">轻量冒烟</el-button>
+          <el-button size="small" @click="applyComparisonTemplate('normal')">常规压测</el-button>
+          <el-button size="small" @click="applyComparisonTemplate('capacity')">容量探测</el-button>
+        </div>
+        <el-form-item label="名称"><el-input v-model="comparisonForm.name" placeholder="如 qwen / deepseek 同参数对比" /></el-form-item>
+        <el-form-item label="数据集">
+          <el-select v-model="comparisonDatasetName" placeholder="选择压测数据集" style="width: 100%">
+            <el-option
+              v-for="item in datasets"
+              :key="item.name"
+              :label="`${item.name} · ${item.dataset} · ${item.item_count} 条`"
+              :value="item.name"
+            />
+          </el-select>
+        </el-form-item>
+        <div class="grid-two">
+          <el-form-item label="并发阶梯"><el-input v-model="comparisonParallelText" placeholder="1,2,4,8" /></el-form-item>
+          <el-form-item label="每档请求数"><el-input v-model="comparisonNumberText" placeholder="5,10,20,40" /></el-form-item>
+        </div>
+        <div class="grid-two">
+          <el-form-item label="读取超时秒"><el-input-number v-model="comparisonReadTimeout" :min="1" style="width: 100%" /></el-form-item>
+          <el-form-item label="最大输出 token"><el-input-number v-model="comparisonMaxTokens" :min="1" style="width: 100%" /></el-form-item>
+        </div>
+        <div class="grid-two">
+          <el-form-item label="最大错误率 %"><el-input-number v-model="comparisonMaxErrorRatePercent" :min="0" :max="100" :step="0.1" style="width: 100%" /></el-form-item>
+          <el-form-item label="P95 延迟阈值 ms"><el-input-number v-model="comparisonMaxP95LatencyMs" :min="0" :step="100" style="width: 100%" /></el-form-item>
+        </div>
+        <el-form-item label="对比模型 2-5 个">
+          <div class="comparison-items">
+            <div v-for="(item, index) in comparisonItems" :key="index" class="comparison-item-row">
+              <el-input v-model="item.display_name" placeholder="展示名" />
+              <el-select v-model="item.new_api_instance_id" clearable placeholder="默认实例">
+                <el-option v-for="instance in instances" :key="instance.id" :label="instance.name" :value="instance.id" />
+              </el-select>
+              <el-input v-model="item.model_name" placeholder="模型名" />
+              <el-input v-model="item.endpoint" placeholder="/v1/chat/completions" />
+              <el-button :disabled="comparisonItems.length <= 2" @click="comparisonItems.splice(index, 1)">移除</el-button>
+            </div>
+            <el-button :disabled="comparisonItems.length >= 5" @click="addComparisonItem">添加模型</el-button>
+          </div>
+        </el-form-item>
+        <el-collapse>
+          <el-collapse-item title="高级 EvalScope 参数 JSON" name="comparison-advanced">
+            <el-input v-model="comparisonExtraArgsText" type="textarea" :rows="6" class="json-editor" />
+          </el-collapse-item>
+        </el-collapse>
+      </el-form>
+      <template #footer>
+        <el-button @click="comparisonDialog = false">取消</el-button>
+        <el-button type="primary" @click="saveComparison">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="comparisonDetailDialog" :title="activeComparison ? `模型对比报告 #${activeComparison.id}` : '模型对比报告'" width="1180px">
+      <div v-if="activeComparison">
+        <div class="report-header">
+          <div>
+            <div class="report-title">{{ activeComparison.name }}</div>
+            <div class="report-subtitle">状态 {{ activeComparison.status }} · 胜出模型 {{ valueOf(activeComparison.summary, 'winner_model') }}</div>
+          </div>
+          <div class="report-actions">
+            <el-tag :type="activeComparison.analysis?.passed ? 'success' : 'warning'" size="large">
+              {{ activeComparison.analysis?.passed ? '有可推荐模型' : '需要关注' }}
+            </el-tag>
+            <el-button @click="exportComparisonJson">导出 JSON</el-button>
+          </div>
+        </div>
+        <el-alert
+          class="form-help"
+          :type="activeComparison.status === 'success' ? 'success' : activeComparison.status === 'partial_failure' ? 'warning' : 'info'"
+          :closable="false"
+          show-icon
+          title="规则结论"
+          :description="String(activeComparison.analysis?.rule_conclusion ?? activeComparison.analysis?.recommendation ?? '暂无结论')"
+        />
+        <el-alert
+          v-if="comparisonAiConclusionMessage"
+          class="form-help"
+          :type="comparisonAiConclusionValid ? 'info' : 'warning'"
+          :closable="false"
+          show-icon
+          title="AI 对比结论"
+          :description="comparisonAiConclusionMessage"
+        />
+        <el-table :data="comparisonRanking" stripe>
+          <el-table-column label="排名" width="80">
+            <template #default="{ $index }">#{{ $index + 1 }}</template>
+          </el-table-column>
+          <el-table-column prop="display_name" label="模型" min-width="150" />
+          <el-table-column label="SLA" width="90">
+            <template #default="{ row }"><el-tag :type="row.passed ? 'success' : 'warning'">{{ row.passed ? '通过' : '未通过' }}</el-tag></template>
+          </el-table-column>
+          <el-table-column label="推荐并发" width="110">
+            <template #default="{ row }">{{ row.recommended_parallel ?? '-' }}</template>
+          </el-table-column>
+          <el-table-column label="最佳 RPS" width="110">
+            <template #default="{ row }">{{ numberTextValue(row.best_throughput) }}</template>
+          </el-table-column>
+          <el-table-column label="P95" width="110">
+            <template #default="{ row }">{{ formatSeconds(row.best_p95_latency_s) }}</template>
+          </el-table-column>
+          <el-table-column label="错误率" width="110">
+            <template #default="{ row }">{{ percentValue(row.max_error_rate) }}</template>
+          </el-table-column>
+          <el-table-column label="成本" width="100">
+            <template #default="{ row }">{{ moneyValue(row.estimated_cost) }}</template>
+          </el-table-column>
+          <el-table-column label="Run" width="90">
+            <template #default="{ row }">#{{ row.run_id }}</template>
+          </el-table-column>
+        </el-table>
+      </div>
+    </el-dialog>
+
+    <el-dialog
+      v-model="comparisonLogDialog"
+      :title="activeComparison ? `模型对比日志 #${activeComparison.id}` : '模型对比日志'"
+      width="980px"
+      @opened="onComparisonLogOpened"
+      @closed="onComparisonLogClosed"
+    >
+      <div class="toolbar compact-toolbar">
+        <strong>{{ activeComparison?.status ?? '-' }}</strong>
+        <el-button size="small" @click="refreshComparisonLog">刷新日志</el-button>
+      </div>
+      <pre class="run-log dialog-log">{{ comparisonLogText || '暂无日志' }}</pre>
     </el-dialog>
 
     <el-dialog v-model="previewDialog" title="数据集预览" width="720px">
@@ -510,11 +751,13 @@
 <script setup lang="ts">
 import * as echarts from 'echarts';
 import { ElMessage, ElMessageBox } from 'element-plus';
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import {
   api,
   parseJsonObject,
   statusType,
+  type ModelPerformanceComparison,
+  type ModelPerformanceComparisonItem,
   type ModelPerformanceDataset,
   type ModelPerformanceRun,
   type ModelPerformanceTest,
@@ -525,9 +768,13 @@ const tests = ref<ModelPerformanceTest[]>([]);
 const instances = ref<NewApiInstance[]>([]);
 const datasets = ref<ModelPerformanceDataset[]>([]);
 const runs = ref<ModelPerformanceRun[]>([]);
+const comparisons = ref<ModelPerformanceComparison[]>([]);
 const selected = ref<ModelPerformanceTest | null>(null);
 const activeRun = ref<ModelPerformanceRun | null>(null);
+const activeComparison = ref<ModelPerformanceComparison | null>(null);
 const runningTestId = ref<number | null>(null);
+const runningComparisonId = ref<number | null>(null);
+const cancelingRunId = ref<number | null>(null);
 const pagination = reactive({ page: 1, page_size: 20, total: 0 });
 const runPagination = reactive({ page: 1, page_size: 20, total: 0 });
 const filters = reactive<{ search: string; instance_id?: number | null }>({ search: '', instance_id: null });
@@ -542,8 +789,12 @@ const datasetFileInput = ref<HTMLInputElement | null>(null);
 const previewDialog = ref(false);
 const previewingDataset = ref<ModelPerformanceDataset | null>(null);
 const detailDialog = ref(false);
+const comparisonDialog = ref(false);
+const comparisonDetailDialog = ref(false);
+const comparisonLogDialog = ref(false);
 const logDialog = ref(false);
 const logBox = ref<HTMLElement | null>(null);
+const activeMainTab = ref('runs');
 const activeDetailTab = ref('overview');
 
 const dialogVisible = ref(false);
@@ -551,7 +802,8 @@ const editing = ref<ModelPerformanceTest | null>(null);
 const form = reactive<Partial<ModelPerformanceTest>>({});
 const selectedDatasetName = ref('');
 const parallelText = ref('1,2,4');
-const numberText = ref('20');
+const numberText = ref('5,10,20');
+const lastGeneratedNumberText = ref('5,10,20');
 const readTimeout = ref(120);
 const maxTokens = ref(128);
 const logEveryNQuery = ref(5);
@@ -564,10 +816,24 @@ const minThroughput = ref(0);
 const inputTokenPrice = ref(0);
 const outputTokenPrice = ref(0);
 const extraArgsText = ref('{}');
+const comparisonEditing = ref<ModelPerformanceComparison | null>(null);
+const comparisonForm = reactive<Partial<ModelPerformanceComparison>>({ name: '', enabled: true });
+const comparisonDatasetName = ref('');
+const comparisonParallelText = ref('1,2,4');
+const comparisonNumberText = ref('5,10,20');
+const comparisonLastGeneratedNumberText = ref('5,10,20');
+const comparisonReadTimeout = ref(120);
+const comparisonMaxTokens = ref(128);
+const comparisonMaxErrorRatePercent = ref(1);
+const comparisonMaxP95LatencyMs = ref(10000);
+const comparisonExtraArgsText = ref('{}');
+const comparisonItems = reactive<ModelPerformanceComparisonItem[]>([]);
+const comparisonLogText = ref('');
 const logText = ref('');
 const logOffset = ref(0);
 let pollTimer: number | undefined;
 let logTimer: number | undefined;
+let comparisonLogTimer: number | undefined;
 const SELECTED_TEST_STORAGE_KEY = 'ai-vigil-model-performance-selected-test-id';
 const SELECTED_RUN_STORAGE_KEY = 'ai-vigil-model-performance-selected-run-id';
 
@@ -576,6 +842,14 @@ const latencyChart = ref<HTMLElement | null>(null);
 const errorChart = ref<HTMLElement | null>(null);
 const tokensChart = ref<HTMLElement | null>(null);
 let charts: echarts.ECharts[] = [];
+
+interface RunningOverviewItem {
+  test: ModelPerformanceTest;
+  run: ModelPerformanceRun;
+}
+
+const runInstanceDialog = ref(false);
+const runningOverview = ref<RunningOverviewItem[]>([]);
 
 function defaultForm(): Partial<ModelPerformanceTest> {
   return {
@@ -592,7 +866,7 @@ function defaultForm(): Partial<ModelPerformanceTest> {
 }
 
 async function load() {
-  await Promise.all([loadTests(), loadDatasets(), loadInstances()]);
+  await Promise.all([loadTests(), loadDatasets(), loadInstances(), loadComparisons()]);
 }
 
 async function loadInstances() {
@@ -609,6 +883,28 @@ async function loadTests() {
   tests.value = page.items;
   pagination.total = page.total;
   await restoreSelectedTest();
+  await loadRunningOverview();
+}
+
+async function loadComparisons() {
+  const page = await api.modelPerformanceComparisons({ page: 1, page_size: 20 });
+  comparisons.value = page.items;
+  if (activeComparison.value) {
+    const current = comparisons.value.find((item) => item.id === activeComparison.value?.id);
+    if (current) activeComparison.value = current;
+  }
+}
+
+async function loadRunningOverview() {
+  const entries = await Promise.all(
+    tests.value.map(async (test) => {
+      const page = await api.modelPerformanceRuns(test.id, { page: 1, page_size: 5 });
+      return page.items
+        .filter((run) => isRunningStatus(run.status))
+        .map((run) => ({ test, run }));
+    })
+  );
+  runningOverview.value = entries.flat().sort((a, b) => b.run.id - a.run.id);
 }
 
 function onDatasetFileChange(event: Event) {
@@ -644,6 +940,28 @@ async function selectTest(row: ModelPerformanceTest) {
   runs.value = [];
   runPagination.page = 1;
   await loadRuns();
+}
+
+async function openRunInstance(row: ModelPerformanceTest, run?: ModelPerformanceRun) {
+  selected.value = row;
+  localStorage.setItem(SELECTED_TEST_STORAGE_KEY, String(row.id));
+  activeRun.value = run ? await api.modelPerformanceRun(run.id) : null;
+  runs.value = [];
+  runPagination.page = 1;
+  await loadRuns();
+  if (run && activeRun.value) {
+    localStorage.setItem(SELECTED_RUN_STORAGE_KEY, String(activeRun.value.id));
+    localStorage.setItem(runStorageKey(row.id), String(activeRun.value.id));
+    logText.value = '';
+    logOffset.value = 0;
+    await loadLogs(false);
+    restartPolling();
+  }
+  runInstanceDialog.value = true;
+}
+
+function handleTestRowClick(row: ModelPerformanceTest) {
+  void openRunInstance(row);
 }
 
 async function restoreSelectedTest() {
@@ -718,7 +1036,8 @@ function syncFieldsFromConfig(row: ModelPerformanceTest) {
   const load = row.load_config ?? {};
   const threshold = row.threshold_config ?? {};
   parallelText.value = formatList(load.parallel ?? [1, 2, 4]);
-  numberText.value = formatList(load.number ?? 20);
+  numberText.value = formatList(load.number ?? defaultNumbersForParallel(parseNumberList(parallelText.value)));
+  lastGeneratedNumberText.value = '';
   readTimeout.value = Number(load.read_timeout ?? 120);
   maxTokens.value = Number(load.max_tokens ?? 128);
   logEveryNQuery.value = Number(load.log_every_n_query ?? 5);
@@ -736,13 +1055,13 @@ function syncFieldsFromConfig(row: ModelPerformanceTest) {
 
 function applyTemplate(type: 'smoke' | 'normal' | 'capacity') {
   const templates = {
-    smoke: { parallel: '1,2', number: '10', timeout: 60, tokens: 80, p95: 8000, p99: 12000, ttft: 3000 },
-    normal: { parallel: '1,2,4,8', number: '50', timeout: 120, tokens: 128, p95: 10000, p99: 20000, ttft: 3000 },
-    capacity: { parallel: '1,2,4,8,16,32', number: '100', timeout: 180, tokens: 128, p95: 15000, p99: 30000, ttft: 5000 }
+    smoke: { parallel: '1,2', timeout: 60, tokens: 80, p95: 8000, p99: 12000, ttft: 3000 },
+    normal: { parallel: '1,2,4,8', timeout: 120, tokens: 128, p95: 10000, p99: 20000, ttft: 3000 },
+    capacity: { parallel: '1,2,4,8,16,32', timeout: 180, tokens: 128, p95: 15000, p99: 30000, ttft: 5000 }
   };
   const item = templates[type];
   parallelText.value = item.parallel;
-  numberText.value = item.number;
+  applyDefaultNumberText();
   readTimeout.value = item.timeout;
   maxTokens.value = item.tokens;
   maxP95LatencyMs.value = item.p95;
@@ -752,6 +1071,21 @@ function applyTemplate(type: 'smoke' | 'normal' | 'capacity') {
   logEveryNQuery.value = 5;
   streamEnabled.value = true;
   maxErrorRatePercent.value = 1;
+}
+
+function applyComparisonTemplate(type: 'smoke' | 'normal' | 'capacity') {
+  const templates = {
+    smoke: { parallel: '1,2', timeout: 60, tokens: 80, p95: 8000 },
+    normal: { parallel: '1,2,4,8', timeout: 120, tokens: 128, p95: 10000 },
+    capacity: { parallel: '1,2,4,8,16,32', timeout: 180, tokens: 128, p95: 15000 }
+  };
+  const item = templates[type];
+  comparisonParallelText.value = item.parallel;
+  applyComparisonDefaultNumberText();
+  comparisonReadTimeout.value = item.timeout;
+  comparisonMaxTokens.value = item.tokens;
+  comparisonMaxP95LatencyMs.value = item.p95;
+  comparisonMaxErrorRatePercent.value = 1;
 }
 
 async function saveTest() {
@@ -823,15 +1157,212 @@ async function runTest(row: ModelPerformanceTest) {
     restartPolling();
     await loadRuns();
     await selectRun(run);
+    await loadRunningOverview();
     ElMessage.success(`已启动后台性能测试，Run ID #${run.id}`);
   } finally {
     runningTestId.value = null;
   }
 }
 
+function openComparisonCreate() {
+  comparisonEditing.value = null;
+  comparisonForm.name = '';
+  comparisonForm.enabled = true;
+  comparisonDatasetName.value = selectedDatasetName.value || datasets.value[0]?.name || '';
+  comparisonParallelText.value = selected.value ? formatList(selected.value.load_config.parallel) : '1,2,4';
+  comparisonNumberText.value = selected.value ? formatList(selected.value.load_config.number) : '5,10,20';
+  comparisonLastGeneratedNumberText.value = '';
+  comparisonReadTimeout.value = Number(selected.value?.load_config.read_timeout ?? 120);
+  comparisonMaxTokens.value = Number(selected.value?.load_config.max_tokens ?? 128);
+  comparisonMaxErrorRatePercent.value = Number(selected.value?.threshold_config.max_error_rate ?? 0.01) * 100;
+  comparisonMaxP95LatencyMs.value = Number(selected.value?.threshold_config.max_p95_latency_ms ?? 10000);
+  comparisonExtraArgsText.value = JSON.stringify(selected.value?.extra_args ?? {}, null, 2);
+  comparisonItems.splice(0, comparisonItems.length);
+  const baseInstance = selected.value?.new_api_instance_id ?? null;
+  comparisonItems.push(
+    { display_name: selected.value?.model_name || '模型 A', new_api_instance_id: baseInstance, model_name: selected.value?.model_name || '', endpoint: '/v1/chat/completions', sort_order: 0 },
+    { display_name: '模型 B', new_api_instance_id: baseInstance, model_name: '', endpoint: '/v1/chat/completions', sort_order: 1 }
+  );
+  comparisonDialog.value = true;
+  if (!selected.value) applyComparisonTemplate('normal');
+}
+
+function openComparisonEdit(row: ModelPerformanceComparison) {
+  comparisonEditing.value = row;
+  comparisonForm.name = row.name;
+  comparisonForm.enabled = row.enabled;
+  comparisonDatasetName.value = String(row.dataset_config?.dataset_name || matchDatasetName(row.dataset_config) || datasets.value[0]?.name || '');
+  comparisonParallelText.value = formatList(row.load_config.parallel ?? [1, 2, 4]);
+  comparisonNumberText.value = formatList(row.load_config.number ?? [5, 10, 20]);
+  comparisonLastGeneratedNumberText.value = '';
+  comparisonReadTimeout.value = Number(row.load_config.read_timeout ?? 120);
+  comparisonMaxTokens.value = Number(row.load_config.max_tokens ?? 128);
+  comparisonMaxErrorRatePercent.value = Number(row.threshold_config.max_error_rate ?? 0.01) * 100;
+  comparisonMaxP95LatencyMs.value = Number(row.threshold_config.max_p95_latency_ms ?? 10000);
+  comparisonExtraArgsText.value = JSON.stringify(row.extra_args ?? {}, null, 2);
+  comparisonItems.splice(0, comparisonItems.length, ...row.items.map((item, index) => ({
+    display_name: item.display_name,
+    new_api_instance_id: item.new_api_instance_id ?? null,
+    model_name: item.model_name,
+    endpoint: item.endpoint || '/v1/chat/completions',
+    sort_order: index
+  })));
+  comparisonDialog.value = true;
+}
+
+function addComparisonItem() {
+  comparisonItems.push({
+    display_name: `模型 ${comparisonItems.length + 1}`,
+    new_api_instance_id: null,
+    model_name: '',
+    endpoint: '/v1/chat/completions',
+    sort_order: comparisonItems.length
+  });
+}
+
+async function saveComparison() {
+  const dataset = datasets.value.find((item) => item.name === comparisonDatasetName.value);
+  if (!dataset) {
+    ElMessage.error('请选择数据集');
+    return;
+  }
+  const items = comparisonItems.map((item, index) => ({ ...item, sort_order: index }));
+  if (items.length < 2 || items.length > 5 || items.some((item) => !item.display_name || !item.model_name)) {
+    ElMessage.error('请配置 2-5 个完整模型项');
+    return;
+  }
+  const payload = {
+    name: comparisonForm.name,
+    enabled: comparisonForm.enabled ?? true,
+    dataset_config: {
+      dataset_name: dataset.name,
+      dataset: dataset.dataset,
+      dataset_path: dataset.dataset_path
+    },
+    load_config: {
+      parallel: parseNumberList(comparisonParallelText.value),
+      number: comparisonNumberText.value.includes(',') ? parseNumberList(comparisonNumberText.value) : Number(comparisonNumberText.value.trim()),
+      read_timeout: comparisonReadTimeout.value,
+      max_tokens: comparisonMaxTokens.value,
+      log_every_n_query: 5,
+      stream: true
+    },
+    threshold_config: {
+      max_error_rate: comparisonMaxErrorRatePercent.value / 100,
+      max_p95_latency_ms: comparisonMaxP95LatencyMs.value
+    },
+    extra_args: parseJsonObject(comparisonExtraArgsText.value),
+    items
+  };
+  if (comparisonEditing.value?.id) {
+    await api.updateModelPerformanceComparison(comparisonEditing.value.id, payload);
+  } else {
+    await api.createModelPerformanceComparison(payload);
+  }
+  comparisonDialog.value = false;
+  ElMessage.success('模型对比任务已保存');
+  await loadComparisons();
+}
+
+async function selectComparison(row: ModelPerformanceComparison) {
+  activeComparison.value = await api.modelPerformanceComparison(row.id);
+}
+
+async function viewComparison(row: ModelPerformanceComparison) {
+  await selectComparison(row);
+  comparisonDetailDialog.value = true;
+}
+
+async function openComparisonLog(row: ModelPerformanceComparison) {
+  await selectComparison(row);
+  await refreshComparisonLog();
+  comparisonLogDialog.value = true;
+}
+
+async function refreshComparisonLog() {
+  if (!activeComparison.value) return;
+  activeComparison.value = await api.modelPerformanceComparison(activeComparison.value.id);
+  const result = await api.modelPerformanceComparisonLogs(activeComparison.value.id);
+  comparisonLogText.value = result.content;
+  if (result.done) onComparisonLogClosed();
+}
+
+async function onComparisonLogOpened() {
+  await refreshComparisonLog();
+  startComparisonLogPollingIfNeeded();
+}
+
+function onComparisonLogClosed() {
+  if (comparisonLogTimer) window.clearInterval(comparisonLogTimer);
+  comparisonLogTimer = undefined;
+}
+
+function startComparisonLogPollingIfNeeded() {
+  if (comparisonLogTimer) window.clearInterval(comparisonLogTimer);
+  if (activeComparison.value && isRunningStatus(activeComparison.value.status)) {
+    comparisonLogTimer = window.setInterval(() => refreshComparisonLog(), 2000);
+  }
+}
+
+async function runComparison(row: ModelPerformanceComparison) {
+  runningComparisonId.value = row.id;
+  try {
+    activeComparison.value = await api.runModelPerformanceComparison(row.id);
+    ElMessage.success(`已启动模型对比任务 #${row.id}`);
+    window.setTimeout(() => pollComparison(row.id), 1500);
+    await loadComparisons();
+  } finally {
+    runningComparisonId.value = null;
+  }
+}
+
+async function pollComparison(id: number) {
+  const latest = await api.modelPerformanceComparison(id);
+  activeComparison.value = latest;
+  await loadComparisons();
+  if (['pending', 'running'].includes(latest.status)) {
+    if (comparisonLogDialog.value) await refreshComparisonLog();
+    window.setTimeout(() => pollComparison(id), 3000);
+  }
+}
+
+async function removeComparison(row: ModelPerformanceComparison) {
+  await ElMessageBox.confirm(`确认删除模型对比任务「${row.name}」？`, '删除确认', { type: 'warning' });
+  await api.deleteModelPerformanceComparison(row.id);
+  if (activeComparison.value?.id === row.id) activeComparison.value = null;
+  ElMessage.success('已删除');
+  await loadComparisons();
+}
+
+async function cancelComparison(row: ModelPerformanceComparison) {
+  await ElMessageBox.confirm(`确认终止模型对比任务 #${row.id}？`, '终止确认', { type: 'warning' });
+  activeComparison.value = await api.cancelModelPerformanceComparison(row.id);
+  ElMessage.success(`已终止模型对比任务 #${row.id}`);
+  await loadComparisons();
+}
+
+async function cancelRun(row: ModelPerformanceRun) {
+  await ElMessageBox.confirm(`确认终止运行 #${row.id}？`, '终止确认', { type: 'warning' });
+  cancelingRunId.value = row.id;
+  try {
+    const cancelled = await api.cancelModelPerformanceRun(row.id);
+    if (activeRun.value?.id === row.id) {
+      activeRun.value = cancelled;
+      clearTimers();
+      await loadLogs(false);
+    }
+    await loadRuns();
+    await loadRunningOverview();
+    ElMessage.success(`已终止运行 #${row.id}`);
+  } finally {
+    cancelingRunId.value = null;
+  }
+}
+
 async function refreshActiveRun() {
   if (!activeRun.value) return;
   activeRun.value = await api.modelPerformanceRun(activeRun.value.id);
+  await loadRunningOverview();
   if (detailDialog.value) {
     await nextTick();
     renderCharts();
@@ -859,6 +1390,7 @@ function restartPolling() {
     if (activeRun.value && !['pending', 'running'].includes(activeRun.value.status)) {
       clearTimers();
       await loadRuns();
+      await loadRunningOverview();
       await loadLogs(false);
     }
   }, 3000);
@@ -870,8 +1402,10 @@ function restartPolling() {
 function clearTimers() {
   if (pollTimer) window.clearInterval(pollTimer);
   if (logTimer) window.clearInterval(logTimer);
+  if (comparisonLogTimer) window.clearInterval(comparisonLogTimer);
   pollTimer = undefined;
   logTimer = undefined;
+  comparisonLogTimer = undefined;
 }
 
 function renderCharts() {
@@ -969,6 +1503,43 @@ function parseNumberList(value: string) {
   return value.split(',').map((item) => Number(item.trim())).filter((item) => Number.isFinite(item) && item > 0);
 }
 
+function defaultNumbersForParallel(parallels: number[]) {
+  return parallels.map((parallel) => Math.min(Math.max(Math.floor(parallel), 1) * 5, 50));
+}
+
+function applyDefaultNumberText() {
+  const generated = defaultNumbersForParallel(parseNumberList(parallelText.value)).join(',');
+  numberText.value = generated;
+  lastGeneratedNumberText.value = generated;
+}
+
+function applyComparisonDefaultNumberText() {
+  const generated = defaultNumbersForParallel(parseNumberList(comparisonParallelText.value)).join(',');
+  comparisonNumberText.value = generated;
+  comparisonLastGeneratedNumberText.value = generated;
+}
+
+watch(parallelText, () => {
+  const generated = defaultNumbersForParallel(parseNumberList(parallelText.value)).join(',');
+  if (!generated) return;
+  if (!numberText.value.trim() || numberText.value.replace(/\s+/g, '') === lastGeneratedNumberText.value) {
+    numberText.value = generated;
+    lastGeneratedNumberText.value = generated;
+  }
+});
+
+watch(comparisonParallelText, () => {
+  const generated = defaultNumbersForParallel(parseNumberList(comparisonParallelText.value)).join(',');
+  if (!generated) return;
+  if (
+    !comparisonNumberText.value.trim() ||
+    comparisonNumberText.value.replace(/\s+/g, '') === comparisonLastGeneratedNumberText.value
+  ) {
+    comparisonNumberText.value = generated;
+    comparisonLastGeneratedNumberText.value = generated;
+  }
+});
+
 function matchDatasetName(config: Record<string, unknown> | undefined) {
   const path = config?.dataset_path;
   return datasets.value.find((item) => item.dataset_path === path)?.name;
@@ -976,6 +1547,10 @@ function matchDatasetName(config: Record<string, unknown> | undefined) {
 
 function datasetLabel(config: Record<string, unknown> | undefined) {
   return String(config?.dataset_name || matchDatasetName(config) || config?.dataset || '-');
+}
+
+function comparisonModelNames(row: ModelPerformanceComparison) {
+  return row.items.map((item) => item.display_name).join(', ');
 }
 
 function instanceName(id?: number | null) {
@@ -989,6 +1564,10 @@ function formatList(value: unknown) {
 function valueOf(obj: Record<string, unknown> | undefined, key: string) {
   const value = obj?.[key];
   return value === undefined || value === null || value === '' ? '-' : value;
+}
+
+function isRunningStatus(status: string | undefined) {
+  return status === 'pending' || status === 'running';
 }
 
 function numberValue(value: unknown) {
@@ -1010,17 +1589,46 @@ const runStatusDescription = computed(() => {
   if (activeRun.value.status === 'pending') return '任务已创建，正在等待后端调度启动 EvalScope。';
   if (activeRun.value.status === 'running') return 'EvalScope 已启动，系统正在自动轮询状态和增量日志。';
   if (activeRun.value.status === 'success') return '运行已完成，下面可以查看图表、分析结论和完整日志。';
+  if (activeRun.value.status === 'cancelled') return '运行已终止，已停止后台 EvalScope 进程。';
   return activeRun.value.error ? `运行失败：${activeRun.value.error}` : '运行失败，请查看执行日志。';
 });
 
 const chartPoints = computed(() => ((activeRun.value?.chart_data?.points as Array<Record<string, unknown>> | undefined) ?? []));
 const slaChecks = computed(() => ((activeRun.value?.analysis?.sla_checks as Array<Record<string, unknown>> | undefined) ?? []));
 const bottlenecks = computed(() => ((activeRun.value?.analysis?.bottlenecks as string[] | undefined) ?? []));
+const comparisonRanking = computed(() => ((activeComparison.value?.summary?.ranking as Array<Record<string, unknown>> | undefined) ?? []));
+const comparisonAiConclusion = computed(() => activeComparison.value?.analysis?.ai_conclusion as Record<string, unknown> | undefined);
+const comparisonAiConclusionReason = computed(() => String(comparisonAiConclusion.value?.reason ?? '').trim());
+const comparisonAiConclusionValid = computed(() => {
+  const reason = comparisonAiConclusionReason.value;
+  if (!reason) return false;
+  if (comparisonAiConclusion.value?.status !== 'success') return false;
+  if (/observed output|does not contain|business-oriented chinese conclusion/i.test(reason)) return false;
+  return /[\u4e00-\u9fff]/.test(reason);
+});
+const comparisonAiConclusionMessage = computed(() => {
+  if (!comparisonAiConclusion.value) return '';
+  if (comparisonAiConclusionValid.value) return comparisonAiConclusionReason.value;
+  const fallback = String(activeComparison.value?.analysis?.rule_conclusion ?? activeComparison.value?.analysis?.recommendation ?? '').trim();
+  return fallback
+    ? `AI 结论未生成有效业务化描述，已使用规则结论：${fallback}`
+    : 'AI 结论未生成有效业务化描述，请检查系统设置中的 AI 校验模型。';
+});
 const reportJson = computed(() =>
   JSON.stringify(
     {
       run: activeRun.value,
       test: selected.value,
+      generated_at: new Date().toISOString()
+    },
+    null,
+    2
+  )
+);
+const comparisonReportJson = computed(() =>
+  JSON.stringify(
+    {
+      comparison: activeComparison.value,
       generated_at: new Date().toISOString()
     },
     null,
@@ -1091,6 +1699,11 @@ async function exportRunJson() {
   ElMessage.success('报告 JSON 已复制到剪贴板');
 }
 
+async function exportComparisonJson() {
+  await navigator.clipboard.writeText(comparisonReportJson.value);
+  ElMessage.success('对比报告 JSON 已复制到剪贴板');
+}
+
 onMounted(load);
 onBeforeUnmount(() => {
   clearTimers();
@@ -1099,6 +1712,116 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+.performance-workbench {
+  min-width: 0;
+}
+
+.performance-tabs :deep(.el-tabs__header) {
+  margin-bottom: 18px;
+}
+
+.workbench-hero {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: center;
+  padding: 18px 20px;
+}
+
+.workbench-layout {
+  display: grid;
+  grid-template-columns: minmax(620px, 1.25fr) minmax(420px, 0.75fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.run-overview-section {
+  padding-bottom: 16px;
+}
+
+.running-card-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.running-card {
+  appearance: none;
+  border: 1px solid #d9e4ef;
+  border-radius: 8px;
+  background: #f8fbfd;
+  color: inherit;
+  cursor: pointer;
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 14px;
+  text-align: left;
+}
+
+.running-card:hover {
+  border-color: #247a62;
+  background: #f2fbf7;
+}
+
+.running-card-head,
+.running-card-stats {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.running-card-head {
+  justify-content: space-between;
+}
+
+.running-card-head strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.running-card-meta,
+.running-card-stats {
+  color: #64748b;
+  font-size: 13px;
+}
+
+.running-card-stats span {
+  white-space: nowrap;
+}
+
+.test-list-panel,
+.run-detail-panel {
+  min-width: 0;
+}
+
+.run-detail-panel {
+  position: sticky;
+  top: 16px;
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 132px);
+  overflow: hidden;
+}
+
+.section-header,
+.history-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 14px;
+}
+
+.section-header span,
+.history-header span {
+  color: #64748b;
+  font-size: 13px;
+}
+
 .dataset-actions,
 .template-row {
   display: flex;
@@ -1114,6 +1837,99 @@ onBeforeUnmount(() => {
 .page-hint {
   color: #64748b;
   line-height: 1.5;
+  margin-top: 4px;
+}
+
+.selected-test {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  border: 1px solid #d9e4ef;
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  background: #f8fbfd;
+}
+
+.selected-title {
+  font-weight: 800;
+  word-break: break-word;
+}
+
+.selected-meta {
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.5;
+  margin-top: 4px;
+  word-break: break-word;
+}
+
+.compact-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.compact-metric {
+  border: 1px solid #d9e4ef;
+  border-radius: 8px;
+  padding: 10px;
+  background: #ffffff;
+  min-height: 66px;
+}
+
+.compact-metric span {
+  display: block;
+  color: #64748b;
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+
+.compact-metric strong {
+  display: block;
+  font-size: 18px;
+  line-height: 1.25;
+  word-break: break-word;
+}
+
+.run-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 10px 0 12px;
+  flex-shrink: 0;
+}
+
+.run-instance-dialog {
+  min-width: 0;
+}
+
+.history-table-scroll {
+  min-height: 180px;
+  overflow: auto;
+  border: 1px solid #d9e4ef;
+  border-radius: 8px;
+  flex: 1;
+}
+
+.run-detail-panel > .section-header,
+.run-detail-panel .selected-test,
+.run-detail-panel .form-help,
+.run-detail-panel .run-status-line,
+.run-detail-panel .compact-metrics,
+.run-detail-panel .history-header,
+.run-detail-panel .pager {
+  flex-shrink: 0;
+}
+
+.run-detail-panel .pager {
+  margin-top: 10px;
+}
+
+.upload-actions input[type="file"] {
+  max-width: 220px;
 }
 
 .label-with-tip {
@@ -1135,16 +1951,12 @@ onBeforeUnmount(() => {
   cursor: help;
 }
 
-.run-monitor {
-  border-color: #9cc9ff;
-}
-
 .run-status-line {
   display: flex;
   align-items: center;
   gap: 14px;
   flex-wrap: wrap;
-  margin-bottom: 14px;
+  margin-bottom: 10px;
   color: #475569;
 }
 
@@ -1272,6 +2084,18 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 1100px) {
+  .running-card-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .workbench-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .run-detail-panel {
+    position: static;
+  }
+
   .report-metrics {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -1316,8 +2140,36 @@ onBeforeUnmount(() => {
   padding-left: 22px;
 }
 
+.comparison-items {
+  display: grid;
+  gap: 10px;
+  width: 100%;
+}
+
+.comparison-item-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.8fr) minmax(140px, 0.8fr) minmax(160px, 1fr) minmax(180px, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+}
+
 @media (max-width: 900px) {
-  .chart-grid {
+  .workbench-hero,
+  .selected-test {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .compact-metrics {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .running-card-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .chart-grid,
+  .comparison-item-row {
     grid-template-columns: 1fr;
   }
 }

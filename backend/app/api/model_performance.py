@@ -4,8 +4,12 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Upload
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models import ModelPerformanceRun, ModelPerformanceTest
+from ..models import ModelPerformanceComparison, ModelPerformanceRun, ModelPerformanceTest
 from ..schemas import (
+    ModelPerformanceComparisonCreate,
+    ModelPerformanceComparisonLogOut,
+    ModelPerformanceComparisonOut,
+    ModelPerformanceComparisonUpdate,
     ModelPerformanceDatasetOut,
     ModelPerformanceDatasetPreviewOut,
     ModelPerformanceRunLogOut,
@@ -16,7 +20,20 @@ from ..schemas import (
     PageOut,
 )
 from ..security import get_current_user
-from ..services.model_performance import create_model_performance_run, execute_model_performance_run, read_run_log
+from ..services.model_performance import (
+    cancel_model_performance_run,
+    create_model_performance_run,
+    execute_model_performance_run,
+    read_run_log,
+)
+from ..services.model_performance_comparisons import (
+    cancel_comparison,
+    create_comparison,
+    execute_comparison,
+    get_comparison,
+    read_comparison_log,
+    update_comparison,
+)
 from ..services.model_performance_datasets import (
     list_performance_datasets,
     preview_performance_dataset,
@@ -31,6 +48,11 @@ runs_router = APIRouter(
 datasets_router = APIRouter(
     prefix="/model-performance-datasets",
     tags=["model-performance-datasets"],
+    dependencies=[Depends(get_current_user)],
+)
+comparisons_router = APIRouter(
+    prefix="/model-performance-comparisons",
+    tags=["model-performance-comparisons"],
     dependencies=[Depends(get_current_user)],
 )
 
@@ -73,6 +95,7 @@ def list_tests(
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
     query = db.query(ModelPerformanceTest).order_by(ModelPerformanceTest.id.desc())
+    query = query.filter(ModelPerformanceTest.name.notlike("[对比子项]%"))
     if search:
         query = query.filter(ModelPerformanceTest.name.like(f"%{search}%"))
     if enabled is not None:
@@ -159,6 +182,16 @@ def get_run(run_id: int, db: Session = Depends(get_db)) -> ModelPerformanceRun:
     return row
 
 
+@runs_router.post("/{run_id}/cancel", response_model=ModelPerformanceRunOut)
+def cancel_run(run_id: int, db: Session = Depends(get_db)) -> ModelPerformanceRun:
+    row = db.query(ModelPerformanceRun).filter(ModelPerformanceRun.id == run_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Model performance run not found")
+    if not cancel_model_performance_run(db, row):
+        raise HTTPException(status_code=409, detail="Model performance run is not running")
+    return row
+
+
 @runs_router.get("/{run_id}/logs", response_model=ModelPerformanceRunLogOut)
 def get_run_logs(
     run_id: int,
@@ -169,3 +202,100 @@ def get_run_logs(
     if not row:
         raise HTTPException(status_code=404, detail="Model performance run not found")
     return read_run_log(row, offset)
+
+
+@comparisons_router.get("", response_model=PageOut[ModelPerformanceComparisonOut])
+def list_comparisons(
+    search: str | None = None,
+    enabled: bool | None = None,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=200),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    query = db.query(ModelPerformanceComparison).order_by(ModelPerformanceComparison.id.desc())
+    if search:
+        query = query.filter(ModelPerformanceComparison.name.like(f"%{search}%"))
+    if enabled is not None:
+        query = query.filter(ModelPerformanceComparison.enabled.is_(enabled))
+    total = query.count()
+    items = query.offset((page - 1) * page_size).limit(page_size).all()
+    return {"items": items, "total": total, "page": page, "page_size": page_size}
+
+
+@comparisons_router.post("", response_model=ModelPerformanceComparisonOut, status_code=status.HTTP_201_CREATED)
+def create_model_comparison(
+    payload: ModelPerformanceComparisonCreate,
+    db: Session = Depends(get_db),
+) -> ModelPerformanceComparison:
+    try:
+        return create_comparison(db, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@comparisons_router.get("/{comparison_id}", response_model=ModelPerformanceComparisonOut)
+def get_model_comparison(comparison_id: int, db: Session = Depends(get_db)) -> ModelPerformanceComparison:
+    row = get_comparison(db, comparison_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Model performance comparison not found")
+    return row
+
+
+@comparisons_router.put("/{comparison_id}", response_model=ModelPerformanceComparisonOut)
+def update_model_comparison(
+    comparison_id: int,
+    payload: ModelPerformanceComparisonUpdate,
+    db: Session = Depends(get_db),
+) -> ModelPerformanceComparison:
+    row = get_comparison(db, comparison_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Model performance comparison not found")
+    if row.status in {"pending", "running"}:
+        raise HTTPException(status_code=409, detail="Model performance comparison is running")
+    try:
+        return update_comparison(db, row, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@comparisons_router.delete("/{comparison_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_model_comparison(comparison_id: int, db: Session = Depends(get_db)) -> None:
+    row = get_comparison(db, comparison_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Model performance comparison not found")
+    db.delete(row)
+    db.commit()
+
+
+@comparisons_router.post("/{comparison_id}/run", response_model=ModelPerformanceComparisonOut)
+async def run_model_comparison(comparison_id: int, db: Session = Depends(get_db)) -> ModelPerformanceComparison:
+    row = get_comparison(db, comparison_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Model performance comparison not found")
+    if row.status in {"pending", "running"}:
+        raise HTTPException(status_code=409, detail="Model performance comparison is already running")
+    row.status = "pending"
+    row.error = None
+    db.commit()
+    asyncio.create_task(execute_comparison(row.id))
+    refreshed = get_comparison(db, row.id)
+    return refreshed or row
+
+
+@comparisons_router.post("/{comparison_id}/cancel", response_model=ModelPerformanceComparisonOut)
+def cancel_model_comparison(comparison_id: int, db: Session = Depends(get_db)) -> ModelPerformanceComparison:
+    row = get_comparison(db, comparison_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Model performance comparison not found")
+    if not cancel_comparison(db, row):
+        raise HTTPException(status_code=409, detail="Model performance comparison is not running")
+    refreshed = get_comparison(db, row.id)
+    return refreshed or row
+
+
+@comparisons_router.get("/{comparison_id}/logs", response_model=ModelPerformanceComparisonLogOut)
+def get_model_comparison_logs(comparison_id: int, db: Session = Depends(get_db)) -> dict[str, object]:
+    row = get_comparison(db, comparison_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Model performance comparison not found")
+    return read_comparison_log(db, row)

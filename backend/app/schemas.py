@@ -517,6 +517,76 @@ class ModelPerformanceDatasetPreviewOut(BaseModel):
     preview: list[str]
 
 
+class ModelPerformanceComparisonItemBase(BaseModel):
+    display_name: str = Field(min_length=1, max_length=200)
+    new_api_instance_id: int | None = None
+    model_name: str = Field(min_length=1, max_length=255)
+    endpoint: str = "/v1/chat/completions"
+    sort_order: int = 0
+
+
+class ModelPerformanceComparisonItemCreate(ModelPerformanceComparisonItemBase):
+    pass
+
+
+class ModelPerformanceComparisonItemOut(ModelPerformanceComparisonItemBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    comparison_id: int
+    test_id: int | None = None
+    run_id: int | None = None
+    status: str
+    error: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class ModelPerformanceComparisonBase(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    enabled: bool = True
+    dataset_config: dict[str, Any] = Field(default_factory=dict)
+    load_config: dict[str, Any] = Field(default_factory=dict)
+    threshold_config: dict[str, Any] = Field(default_factory=dict)
+    extra_args: dict[str, Any] = Field(default_factory=dict)
+
+
+class ModelPerformanceComparisonCreate(ModelPerformanceComparisonBase):
+    items: list[ModelPerformanceComparisonItemCreate] = Field(min_length=2, max_length=5)
+
+
+class ModelPerformanceComparisonUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    enabled: bool | None = None
+    dataset_config: dict[str, Any] | None = None
+    load_config: dict[str, Any] | None = None
+    threshold_config: dict[str, Any] | None = None
+    extra_args: dict[str, Any] | None = None
+    items: list[ModelPerformanceComparisonItemCreate] | None = Field(default=None, min_length=2, max_length=5)
+
+
+class ModelPerformanceComparisonOut(ModelPerformanceComparisonBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    status: str
+    duration_ms: int
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    summary: dict[str, Any]
+    chart_data: dict[str, Any]
+    analysis: dict[str, Any]
+    error: str | None = None
+    items: list[ModelPerformanceComparisonItemOut] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
+
+
+class ModelPerformanceComparisonLogOut(BaseModel):
+    content: str
+    done: bool
+
+
 class TrendBucket(BaseModel):
     label: str
     total: int

@@ -1,15 +1,19 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 from datetime import datetime
 import json
+import os
 from pathlib import Path
 import re
 import shutil
+import signal
 import sqlite3
 import sys
 import time
 from typing import Any
+from uuid import uuid4
 
 from sqlalchemy.orm import Session
 
@@ -21,10 +25,12 @@ from .new_api_instances import resolve_instance
 
 DEFAULT_DATASET = PROJECT_ROOT / "backend" / "app" / "datasets" / "evalscope_openqa_zh.jsonl"
 SENSITIVE_HEADER_NAMES = {"authorization", "api-key", "x-api-key"}
+LOG_TAIL_CHARS = 20000
 EVALSCOPE_MISSING_MESSAGE = (
     "EvalScope is not installed or not on PATH. Install it in the backend environment with: "
     "pip install 'evalscope[perf]==1.7.0'"
 )
+_ACTIVE_RUN_PROCESSES: dict[int, asyncio.subprocess.Process] = {}
 
 
 def _as_int_list(value: Any, default: list[int]) -> list[int]:
@@ -41,7 +47,12 @@ def _as_int_list(value: Any, default: list[int]) -> list[int]:
 
 
 def _default_dataset_config(config: dict[str, Any] | None) -> dict[str, Any]:
-    merged = {"dataset": "openqa", "dataset_path": str(DEFAULT_DATASET)}
+    merged = {
+        "dataset": "openqa",
+        "dataset_path": str(DEFAULT_DATASET),
+        "cache_busting_enabled": True,
+        "cache_busting_mode": "prompt_suffix",
+    }
     merged.update(config or {})
     return merged
 
@@ -49,7 +60,7 @@ def _default_dataset_config(config: dict[str, Any] | None) -> dict[str, Any]:
 def _default_load_config(config: dict[str, Any] | None) -> dict[str, Any]:
     merged: dict[str, Any] = {
         "parallel": [1, 2, 4],
-        "number": 20,
+        "number": [5, 10, 20],
         "read_timeout": 120,
         "connect_timeout": 30,
         "max_tokens": 128,
@@ -59,6 +70,10 @@ def _default_load_config(config: dict[str, Any] | None) -> dict[str, Any]:
     }
     merged.update(config or {})
     return merged
+
+
+def _default_numbers_for_parallel(parallels: list[int]) -> list[int]:
+    return [min(max(parallel, 1) * 5, 50) for parallel in parallels]
 
 
 def _flag_name(key: str) -> str:
@@ -98,6 +113,22 @@ def sanitize_command(command: list[str]) -> list[str]:
     return sanitized
 
 
+def sanitize_log_content(content: str) -> str:
+    content = re.sub(
+        r'("?(?:Authorization|api-key|x-api-key)"?\s*[:=]\s*"?Bearer\s+)[^"\s,}]+',
+        r"\1<redacted>",
+        content,
+        flags=re.IGNORECASE,
+    )
+    content = re.sub(
+        r'("?(?:Authorization|api-key|x-api-key)"?\s*[:=]\s*"?)(?!(?:Bearer\s+)?<redacted>|Bearer\s+)[^"\s,}]+',
+        r"\1<redacted>",
+        content,
+        flags=re.IGNORECASE,
+    )
+    return content
+
+
 def _evalscope_command_prefix() -> list[str]:
     executable = shutil.which("evalscope")
     if executable:
@@ -108,12 +139,38 @@ def _evalscope_command_prefix() -> list[str]:
     raise FileNotFoundError(EVALSCOPE_MISSING_MESSAGE)
 
 
+def _cache_busting_suffix(run_id: int, parallel: int, index: int) -> str:
+    return f" [perf_nonce: run={run_id} parallel={parallel} item={index:06d} uuid={uuid4().hex}]"
+
+
+def _cache_busted_dataset_path(dataset_path: Path, dataset: str, output_dir: Path, run_id: int, parallel: int) -> Path:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    suffix = ".jsonl" if dataset == "openqa" else ".txt"
+    target = output_dir / f"cache_busted_dataset{suffix}"
+    with dataset_path.open("r", encoding="utf-8") as source, target.open("w", encoding="utf-8") as handle:
+        item_index = 0
+        for line in source:
+            prompt = line.rstrip("\r\n")
+            if not prompt.strip():
+                continue
+            item_index += 1
+            prompt_suffix = _cache_busting_suffix(run_id, parallel, item_index)
+            if dataset == "openqa":
+                record = json.loads(prompt)
+                record["question"] = f"{record.get('question', '')}{prompt_suffix}"
+                handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+            else:
+                handle.write(f"{prompt}{prompt_suffix}\n")
+    return target
+
+
 def build_evalscope_command(
     db: Session,
     test: ModelPerformanceTest,
     output_dir: Path,
     parallel: int | None = None,
     number: int | None = None,
+    run_id: int | None = None,
 ) -> tuple[list[str], list[str]]:
     instance = resolve_instance(db, test.new_api_instance_id)
     endpoint = test.endpoint or "/v1/chat/completions"
@@ -123,6 +180,18 @@ def build_evalscope_command(
     dataset_path = Path(str(dataset_config.get("dataset_path") or DEFAULT_DATASET)).expanduser()
     if not dataset_path.exists():
         raise FileNotFoundError(f"Dataset file not found: {dataset_path}")
+    selected_parallel = parallel or _as_int_list(load_config.get("parallel"), [1])[0]
+    selected_number = number or _as_int_list(
+        load_config.get("number"),
+        _default_numbers_for_parallel(_as_int_list(load_config.get("parallel"), [1])),
+    )[0]
+    dataset = str(dataset_config.get("dataset", "openqa"))
+    if (
+        run_id is not None
+        and dataset_config.get("cache_busting_enabled", True)
+        and dataset_config.get("cache_busting_mode", "prompt_suffix") == "prompt_suffix"
+    ):
+        dataset_path = _cache_busted_dataset_path(dataset_path, dataset, output_dir, run_id, selected_parallel)
 
     command = [
         *_evalscope_command_prefix(),
@@ -130,7 +199,7 @@ def build_evalscope_command(
         "--url",
         url,
         "--parallel",
-        str(parallel or _as_int_list(load_config.get("parallel"), [1])[0]),
+        str(selected_parallel),
         "--model",
         test.model_name,
         "--log-every-n-query",
@@ -140,7 +209,7 @@ def build_evalscope_command(
         "--connect-timeout",
         str(load_config.get("connect_timeout", 30)),
         "-n",
-        str(number or load_config.get("number", 20)),
+        str(selected_number),
         "--max-prompt-length",
         str(load_config.get("max_prompt_length", 128000)),
         "--max-tokens",
@@ -148,7 +217,7 @@ def build_evalscope_command(
         "--api",
         str(load_config.get("api", "openai")),
         "--dataset",
-        str(dataset_config.get("dataset", "openqa")),
+        dataset,
         "--dataset-path",
         str(dataset_path),
         "--name",
@@ -167,7 +236,7 @@ def build_evalscope_command(
         command.extend(headers)
 
     for key, value in (test.extra_args or {}).items():
-        if key in {"headers", "extra_cli_args"}:
+        if key in {"headers", "extra_cli_args"} or key.startswith("_") or key in {"comparison_id", "comparison_item_id"}:
             continue
         _add_optional_arg(command, _flag_name(key), value)
     for item in (test.extra_args or {}).get("extra_cli_args", []):
@@ -192,11 +261,48 @@ def create_model_performance_run(db: Session, test: ModelPerformanceTest) -> Mod
     return run
 
 
+def _mark_run_cancelled(run: ModelPerformanceRun) -> None:
+    run.status = "cancelled"
+    run.finished_at = datetime.utcnow()
+    run.error = "Run cancelled by user"
+    if run.started_at:
+        run.duration_ms = int((run.finished_at - run.started_at).total_seconds() * 1000)
+
+
+def _is_run_cancelled(db: Session, run: ModelPerformanceRun) -> bool:
+    db.refresh(run)
+    return run.status == "cancelled"
+
+
+def _terminate_process(process: asyncio.subprocess.Process) -> None:
+    if process.returncode is not None:
+        return
+    if os.name != "nt":
+        with suppress(ProcessLookupError):
+            os.killpg(process.pid, signal.SIGTERM)
+            return
+    process.terminate()
+
+
+def cancel_model_performance_run(db: Session, run: ModelPerformanceRun) -> bool:
+    if run.status not in {"pending", "running"}:
+        return False
+    _mark_run_cancelled(run)
+    process = _ACTIVE_RUN_PROCESSES.get(run.id)
+    if process:
+        _terminate_process(process)
+    db.commit()
+    db.refresh(run)
+    return True
+
+
 async def execute_model_performance_run(run_id: int) -> None:
     db = SessionLocal()
     try:
         run = db.query(ModelPerformanceRun).filter(ModelPerformanceRun.id == run_id).first()
         if not run:
+            return
+        if run.status == "cancelled":
             return
         test = db.query(ModelPerformanceTest).filter(ModelPerformanceTest.id == run.test_id).first()
         if not test:
@@ -211,8 +317,8 @@ async def execute_model_performance_run(run_id: int) -> None:
         log_path = run_dir / "benchmark.log"
         load_config = _default_load_config(test.load_config)
         parallels = _as_int_list(load_config.get("parallel"), [1])
-        numbers = _as_int_list(load_config.get("number"), [20])
-        command, sanitized = build_evalscope_command(db, test, run_dir, parallels[0], numbers[0])
+        numbers = _as_int_list(load_config.get("number"), _default_numbers_for_parallel(parallels))
+        command, sanitized = build_evalscope_command(db, test, run_dir, parallels[0], numbers[0], run_id=run.id)
         run.status = "running"
         run.started_at = datetime.utcnow()
         run.output_dir = str(run_dir)
@@ -224,11 +330,15 @@ async def execute_model_performance_run(run_id: int) -> None:
         return_code = 0
         with log_path.open("w", encoding="utf-8") as log_file:
             for index, parallel in enumerate(parallels):
+                if _is_run_cancelled(db, run):
+                    return
                 number = numbers[index] if len(numbers) > index else numbers[-1]
                 parallel_dir = run_dir / f"parallel_{parallel}"
                 parallel_dir.mkdir(parents=True, exist_ok=True)
-                command, sanitized = build_evalscope_command(db, test, parallel_dir, parallel, number)
+                command, sanitized = build_evalscope_command(db, test, parallel_dir, parallel, number, run_id=run.id)
                 log_file.write(f"\n=== parallel {parallel}, number {number} ===\n")
+                if (test.dataset_config or {}).get("cache_busting_enabled", True):
+                    log_file.write("Cache busting: enabled via per-run prompt nonce dataset.\n")
                 log_file.write("Command: " + " ".join(sanitized) + "\n\n")
                 log_file.flush()
                 process = await asyncio.create_subprocess_exec(
@@ -236,7 +346,11 @@ async def execute_model_performance_run(run_id: int) -> None:
                     cwd=str(parallel_dir),
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.STDOUT,
+                    start_new_session=os.name != "nt",
                 )
+                _ACTIVE_RUN_PROCESSES[run_id] = process
+                if _is_run_cancelled(db, run):
+                    _terminate_process(process)
                 assert process.stdout is not None
                 while True:
                     line = await process.stdout.readline()
@@ -245,6 +359,11 @@ async def execute_model_performance_run(run_id: int) -> None:
                     log_file.write(line.decode("utf-8", errors="replace"))
                     log_file.flush()
                 code = await process.wait()
+                _ACTIVE_RUN_PROCESSES.pop(run_id, None)
+                if _is_run_cancelled(db, run):
+                    log_file.write("\nRun cancelled by user.\n")
+                    log_file.flush()
+                    return
                 if code != 0:
                     return_code = code
                     break
@@ -271,19 +390,22 @@ async def execute_model_performance_run(run_id: int) -> None:
             run.error = str(exc)
             db.commit()
     finally:
+        _ACTIVE_RUN_PROCESSES.pop(run_id, None)
         db.close()
 
 
 def read_run_log(run: ModelPerformanceRun, offset: int = 0) -> dict[str, Any]:
     path = Path(run.log_path or "")
-    if not path.exists():
+    if not path.is_file() and run.output_dir:
+        path = Path(run.output_dir) / "benchmark.log"
+    if not path.is_file():
         return {"content": "", "next_offset": 0, "done": run.status not in {"pending", "running"}}
     with path.open("rb") as handle:
         handle.seek(max(offset, 0))
         data = handle.read()
         next_offset = handle.tell()
     return {
-        "content": data.decode("utf-8", errors="replace"),
+        "content": sanitize_log_content(data.decode("utf-8", errors="replace")),
         "next_offset": next_offset,
         "done": run.status not in {"pending", "running"},
     }

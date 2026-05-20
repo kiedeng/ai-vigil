@@ -258,6 +258,52 @@ class ModelPerformanceRun(Base, TimestampMixin):
     test: Mapped[ModelPerformanceTest] = relationship(back_populates="runs")
 
 
+class ModelPerformanceComparison(Base, TimestampMixin):
+    __tablename__ = "model_performance_comparisons"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    name: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="idle", nullable=False, index=True)
+    duration_ms: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    dataset_config: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    load_config: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    threshold_config: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    extra_args: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    summary: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    chart_data: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    analysis: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    items: Mapped[list["ModelPerformanceComparisonItem"]] = relationship(
+        back_populates="comparison", cascade="all, delete-orphan", order_by="ModelPerformanceComparisonItem.sort_order"
+    )
+
+
+class ModelPerformanceComparisonItem(Base, TimestampMixin):
+    __tablename__ = "model_performance_comparison_items"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    comparison_id: Mapped[int] = mapped_column(
+        ForeignKey("model_performance_comparisons.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    display_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    new_api_instance_id: Mapped[int | None] = mapped_column(
+        ForeignKey("new_api_instances.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    model_name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    endpoint: Mapped[str] = mapped_column(String(100), default="/v1/chat/completions", nullable=False)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    test_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    run_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="pending", nullable=False, index=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    comparison: Mapped[ModelPerformanceComparison] = relationship(back_populates="items")
+
+
 class GoldenCase(Base, TimestampMixin):
     __tablename__ = "golden_cases"
 

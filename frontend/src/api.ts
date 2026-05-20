@@ -238,6 +238,46 @@ export interface ModelPerformanceDataset {
   preview: string[];
 }
 
+export interface ModelPerformanceComparisonItem {
+  id?: number;
+  comparison_id?: number;
+  display_name: string;
+  new_api_instance_id?: number | null;
+  model_name: string;
+  endpoint: string;
+  sort_order: number;
+  test_id?: number | null;
+  run_id?: number | null;
+  status?: string;
+  error?: string | null;
+}
+
+export interface ModelPerformanceComparison {
+  id: number;
+  name: string;
+  enabled: boolean;
+  status: string;
+  duration_ms: number;
+  started_at?: string | null;
+  finished_at?: string | null;
+  dataset_config: Record<string, unknown>;
+  load_config: Record<string, unknown>;
+  threshold_config: Record<string, unknown>;
+  extra_args: Record<string, unknown>;
+  summary: Record<string, unknown>;
+  chart_data: Record<string, unknown>;
+  analysis: Record<string, unknown>;
+  error?: string | null;
+  items: ModelPerformanceComparisonItem[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ModelPerformanceComparisonLog {
+  content: string;
+  done: boolean;
+}
+
 export interface TrendSummary {
   windows: Record<string, {
     label: string;
@@ -474,6 +514,8 @@ export const api = {
     return request<Page<ModelPerformanceRun>>(`/api/model-performance-tests/${testId}/runs${query.toString() ? `?${query.toString()}` : ''}`);
   },
   modelPerformanceRun: (runId: number) => request<ModelPerformanceRun>(`/api/model-performance-runs/${runId}`),
+  cancelModelPerformanceRun: (runId: number) =>
+    request<ModelPerformanceRun>(`/api/model-performance-runs/${runId}/cancel`, { method: 'POST' }),
   modelPerformanceRunLogs: (runId: number, offset = 0) =>
     request<ModelPerformanceRunLog>(`/api/model-performance-runs/${runId}/logs?offset=${offset}`),
   modelPerformanceDatasets: () => request<ModelPerformanceDataset[]>('/api/model-performance-datasets'),
@@ -491,7 +533,27 @@ export const api = {
     formData.append('dataset', payload.dataset);
     if (payload.description) formData.append('description', payload.description);
     return uploadRequest<ModelPerformanceDataset>('/api/model-performance-datasets', formData);
-  }
+  },
+  modelPerformanceComparisons: (params: { search?: string; enabled?: boolean | null; page?: number; page_size?: number } = {}) => {
+    const query = new URLSearchParams();
+    if (params.search) query.set('search', params.search);
+    if (params.enabled !== undefined && params.enabled !== null) query.set('enabled', String(params.enabled));
+    if (params.page) query.set('page', String(params.page));
+    if (params.page_size) query.set('page_size', String(params.page_size));
+    return request<Page<ModelPerformanceComparison>>(`/api/model-performance-comparisons${query.toString() ? `?${query.toString()}` : ''}`);
+  },
+  modelPerformanceComparison: (id: number) => request<ModelPerformanceComparison>(`/api/model-performance-comparisons/${id}`),
+  createModelPerformanceComparison: (payload: Partial<ModelPerformanceComparison>) =>
+    request<ModelPerformanceComparison>('/api/model-performance-comparisons', { method: 'POST', body: JSON.stringify(payload) }),
+  updateModelPerformanceComparison: (id: number, payload: Partial<ModelPerformanceComparison>) =>
+    request<ModelPerformanceComparison>(`/api/model-performance-comparisons/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
+  deleteModelPerformanceComparison: (id: number) => request<void>(`/api/model-performance-comparisons/${id}`, { method: 'DELETE' }),
+  runModelPerformanceComparison: (id: number) =>
+    request<ModelPerformanceComparison>(`/api/model-performance-comparisons/${id}/run`, { method: 'POST' }),
+  cancelModelPerformanceComparison: (id: number) =>
+    request<ModelPerformanceComparison>(`/api/model-performance-comparisons/${id}/cancel`, { method: 'POST' }),
+  modelPerformanceComparisonLogs: (id: number) =>
+    request<ModelPerformanceComparisonLog>(`/api/model-performance-comparisons/${id}/logs`)
 };
 
 export function parseJsonObject(text: string): Record<string, unknown> {
