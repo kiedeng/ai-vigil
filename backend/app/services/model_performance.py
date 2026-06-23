@@ -129,6 +129,40 @@ def sanitize_log_content(content: str) -> str:
     return content
 
 
+def _evalscope_failure_message(log_path: Path, return_code: int) -> str:
+    try:
+        content = sanitize_log_content(log_path.read_text(encoding="utf-8", errors="replace"))
+    except OSError:
+        return f"evalscope exited with code {return_code}"
+
+    http_match = re.search(r"Non-retryable error \(HTTP\s+(\d+)\):\s*(.+?)(?:\.\s+Please check|\n)", content, flags=re.S)
+    if http_match:
+        status_code = http_match.group(1)
+        detail = http_match.group(2).strip()
+        parsed = None
+        with suppress(json.JSONDecodeError):
+            parsed = json.loads(detail)
+        if isinstance(parsed, dict):
+            error = parsed.get("error")
+            if isinstance(error, dict):
+                message = str(error.get("message") or "").strip()
+                code = str(error.get("code") or "").strip()
+                if message and code:
+                    return f"EvalScope HTTP {status_code}: {message} ({code})"
+                if message:
+                    return f"EvalScope HTTP {status_code}: {message}"
+        return f"EvalScope HTTP {status_code}: {detail}"
+
+    last_error = None
+    for line in content.splitlines():
+        cleaned = re.sub(r"\x1b\[[0-9;]*m", "", line).strip()
+        if "ERROR" in cleaned:
+            last_error = cleaned
+    if last_error:
+        return last_error
+    return f"evalscope exited with code {return_code}"
+
+
 def _evalscope_command_prefix() -> list[str]:
     executable = shutil.which("evalscope")
     if executable:
@@ -356,7 +390,7 @@ async def execute_model_performance_run(run_id: int) -> None:
                     line = await process.stdout.readline()
                     if not line:
                         break
-                    log_file.write(line.decode("utf-8", errors="replace"))
+                    log_file.write(sanitize_log_content(line.decode("utf-8", errors="replace")))
                     log_file.flush()
                 code = await process.wait()
                 _ACTIVE_RUN_PROCESSES.pop(run_id, None)
@@ -377,7 +411,7 @@ async def execute_model_performance_run(run_id: int) -> None:
         run.analysis = analysis
         run.status = "success" if return_code == 0 else "failure"
         if return_code != 0:
-            run.error = f"evalscope exited with code {return_code}"
+            run.error = _evalscope_failure_message(log_path, return_code)
         (run_dir / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
         (run_dir / "analysis.json").write_text(json.dumps(analysis, ensure_ascii=False, indent=2), encoding="utf-8")
         (run_dir / "chart_data.json").write_text(json.dumps(chart_data, ensure_ascii=False, indent=2), encoding="utf-8")

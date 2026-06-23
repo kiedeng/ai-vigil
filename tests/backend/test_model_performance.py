@@ -15,6 +15,7 @@ from backend.app.models import (
     NewApiInstance,
 )
 from backend.app.services.model_performance import (
+    _evalscope_failure_message,
     analyze_evalscope_output,
     build_evalscope_command,
     cancel_model_performance_run,
@@ -245,6 +246,23 @@ def test_read_run_log_falls_back_to_output_dir_and_redacts_secret(tmp_path):
     assert "another-secret" not in log["content"]
     assert "Bearer <redacted>" in log["content"]
     assert log["done"] is True
+
+
+def test_evalscope_failure_message_extracts_http_error_and_redacts_secret(tmp_path):
+    log_path = tmp_path / "benchmark.log"
+    log_path.write_text(
+        """
+        2026-05-21 - evalscope - INFO: Starting benchmark
+        2026-05-21 - evalscope - INFO: {"headers": {"Authorization": "Bearer secret-token"}}
+        2026-05-21 - evalscope - ERROR: Non-retryable error (HTTP 403): {"error": {"message": "预扣费额度失败, 用户剩余额度: $0.15, 需要预扣费额度: $0.41", "code": "insufficient_user_quota"}}. Please check your --url and --api settings.
+        """,
+        encoding="utf-8",
+    )
+
+    message = _evalscope_failure_message(log_path, 1)
+
+    assert message == "EvalScope HTTP 403: 预扣费额度失败, 用户剩余额度: $0.15, 需要预扣费额度: $0.41 (insufficient_user_quota)"
+    assert "secret-token" not in message
 
 
 def test_analyze_evalscope_output_extracts_chart_data(tmp_path):
